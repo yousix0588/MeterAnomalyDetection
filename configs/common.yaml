@@ -1,0 +1,12 @@
+time:
+  timezone: Australia/Sydney
+  input_interval_minutes: 5
+  ensemble_interval_minutes: 15
+  train_end_exclusive: "2026-08-01"
+  test_start_inclusive: "2026-08-01"
+  test_end_exclusive: "2026-09-01"
+
+window_policy:
+  neural_window_minutes: 1440
+  neural_stride_minutes: 15
+  points_per_day_at_input_interval: 288

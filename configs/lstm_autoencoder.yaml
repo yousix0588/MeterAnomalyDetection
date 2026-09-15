@@ -1,0 +1,56 @@
+seed: 42
+
+data:
+  root: data/processed/meter_csvs
+  extensions:
+    - .csv
+    - .xlsx
+    - .xls
+  timestamp_column: timestamp
+  features:
+    - powerFactor
+    - pRealKw
+    - pRealPositiveKw
+    - pRealNegativeKw
+    - pReactiveKw
+    - pReactivePositiveKw
+    - pReactiveNegativeKw
+    - vRMSMin
+    - vRMSMax
+    - iRMSMin
+    - iRMSMax
+  frequency: 5min
+  window_size: 288
+  stride: 3
+  score_block_size: 3
+  max_interpolation_gap: 3
+  max_missing_ratio: 0.1
+  meter_limit: null
+  scaler_max_rows: 1000000
+
+splits:
+  timezone: Australia/Sydney
+  train_end: "2026-08-01"
+  test_start: "2026-08-01"
+  test_end: "2026-09-01"
+  validation_ratio: 0.15
+
+model:
+  hidden_size: 64
+  latent_size: 24
+  num_layers: 1
+  dropout: 0.1
+
+training:
+  epochs: 40
+  batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 0.00001
+  patience: 7
+  num_workers: 0
+  gradient_clip: 1.0
+  threshold_quantile: 0.995
+  device: auto
+
+output:
+  directory: runs/lstm_autoencoder/aligned_august

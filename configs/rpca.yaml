@@ -1,0 +1,18 @@
+model_name: rpca
+
+time:
+  timezone: Australia/Sydney
+  input_interval_minutes: 5
+  train_end_exclusive: "2026-08-01"
+  test_start_inclusive: "2026-08-01"
+  test_end_exclusive: "2026-09-01"
+
+window:
+  duration_minutes: 1440
+  size_points: 288
+  sliding: false
+
+runtime:
+  output_directory: runs/rpca/august
+  canonical_output_pattern: "*_scores_15min.csv"
+  note: The runner receives test boundaries through CLI and Slurm and aggregates native 5-minute residuals in groups of three.

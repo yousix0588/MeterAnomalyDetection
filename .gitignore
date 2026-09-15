@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+venv_mp/
+
+# Raw and generated data
+data/raw/
+data/processed/
+runs/
+
+# Scheduler and training logs
+*.out
+*.err
+*.log
+
+# Generated model artifacts
+*.pt
+*.pth
+*.joblib

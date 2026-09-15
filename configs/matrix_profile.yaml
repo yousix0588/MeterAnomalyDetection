@@ -1,0 +1,27 @@
+model_name: matrix_profile
+
+time:
+  timezone: Australia/Sydney
+  input_interval_minutes: 5
+  internal_interval_minutes: 30
+  baseline_end_inclusive: "2026-07-31"
+  detection_start_inclusive: "2026-08-01"
+  detection_end_inclusive: "2026-08-31"
+
+windows:
+  short_minutes: 120
+  short_points: 4
+  medium_minutes: 360
+  medium_points: 12
+  daily_minutes: 1440
+  daily_points: 48
+  stride_minutes: 30
+  stride_points: 1
+
+runtime:
+  history_mode: fixed
+  calibration_source: baseline_only
+  output_directory: runs/matrix_profile/results/matrix_profile_august_fixed_july
+  native_output: scores_30min.csv
+  canonical_output: scores_15min.csv
+  note: The 15-minute compatibility view is explicitly marked as upsampled from the native 30-minute scores.

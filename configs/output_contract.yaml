@@ -1,0 +1,50 @@
+version: 1
+timezone: Australia/Sydney
+interval_minutes: 15
+test_start_inclusive: "2026-08-01"
+test_end_exclusive: "2026-09-01"
+
+calibration:
+  source: train_only
+  end_exclusive: "2026-08-01"
+  percentile_range: [0.0, 1.0]
+  update_during_test: false
+
+required_score_fields:
+  - model
+  - series_id
+  - interval_start
+  - interval_end
+  - raw_score
+  - max_score
+  - mean_score
+  - score_std
+  - max_percentile
+  - mean_percentile
+  - threshold
+  - is_anomaly
+  - coverage_ratio
+  - source_resolution_minutes
+  - aggregation_method
+  - data_status
+  - calibration_version
+  - available
+
+matrix_profile:
+  native_resolution_minutes: 30
+  canonical_view: repeat_to_15min
+  required_data_status: upsampled_from_30m
+
+event_fields:
+  - model
+  - event_id
+  - series_id
+  - start
+  - end
+  - duration_minutes
+  - max_raw_score
+  - mean_raw_score
+  - max_score_percentile
+  - threshold
+  - interval_count
+  - calibration_version

@@ -1,0 +1,20 @@
+model_name: lstm_vae
+
+time:
+  timezone: Australia/Sydney
+  input_interval_minutes: 5
+  train_end_exclusive: "2026-08-01"
+  test_start_inclusive: "2026-08-01"
+  test_end_exclusive: "2026-09-01"
+
+window:
+  duration_minutes: 1440
+  stride_minutes: 15
+  size_points: 288
+  stride_points: 3
+  scored_tail_points: 3
+
+runtime:
+  output_directory: runs/lstm_vae/august
+  canonical_output: ALL_METERS_scores_15min.csv
+  note: The runner receives time values through CLI and Slurm arguments and writes frozen train-calibrated scores.
