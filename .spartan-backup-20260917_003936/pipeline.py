@@ -38,59 +38,30 @@ def prepare_data(config: dict[str, Any]):
     score_block_size = d.get("score_block_size", d["stride"])
     if score_block_size != d["stride"]:
         raise ValueError("score_block_size must equal stride for gap-free 15-minute outputs")
-    skipped: list[tuple[str, str]] = []
-    min_baseline = d.get("window_size", 288)
-
     for key, frame in raw.items():
-        try:
-            train_raw, val_raw, test_raw = chronological_date_split(
-                frame,
-                split["train_end"],
-                split["test_start"],
-                split["test_end"],
-                split["timezone"],
-                split["validation_ratio"],
-                min_baseline_rows=min_baseline,
-            )
-            train_clean = clean_series(train_raw, d["frequency"], d["max_interpolation_gap"])[0]
-            val_clean = clean_series(val_raw, d["frequency"], d["max_interpolation_gap"])[0]
-            test_clean = clean_series(test_raw, d["frequency"], d["max_interpolation_gap"])[0]
-
-            if test_clean.dropna().empty:
-                raise ValueError("Test data is empty after cleaning")
-
-            baseline_raw = pd.concat([train_raw, val_raw]).sort_index()
-            baseline_clean = clean_series(
-                baseline_raw, d["frequency"], d["max_interpolation_gap"]
-            )[0]
-            context_rows = d["window_size"] - score_block_size
-            if len(baseline_clean) < context_rows:
-                raise ValueError(
-                    f"Cleaned baseline length ({len(baseline_clean)}) < required context ({context_rows})"
-                )
-
-            scoring = pd.concat([baseline_clean.tail(context_rows), test_clean]).sort_index()
-            full_index = pd.date_range(
-                scoring.index.min(), scoring.index.max(), freq=d["frequency"], tz=scoring.index.tz
-            )
-            test[key] = scoring.reindex(full_index)
-            train[key] = train_clean
-            val[key] = val_clean
-        except ValueError as exc:
-            LOG.warning("Skipping meter '%s': %s", key, exc)
-            skipped.append((key, str(exc)))
-            continue
-
-    if skipped:
-        print(f"[prepare_data] Skipped {len(skipped)} / {len(raw)} meters due to insufficient history or test data.")
-        for k, reason in skipped[:10]:
-            print(f"  - {k}: {reason}")
-        if len(skipped) > 10:
-            print(f"  ... and {len(skipped) - 10} more meters.")
-    print(f"[prepare_data] Successfully retained {len(train)} valid meters for training & evaluation.")
-
-    if not train:
-        raise ValueError("No valid meters remained after filtering insufficient baseline/test data.")
+        train_raw, val_raw, test_raw = chronological_date_split(
+            frame,
+            split["train_end"],
+            split["test_start"],
+            split["test_end"],
+            split["timezone"],
+            split["validation_ratio"],
+        )
+        train[key] = clean_series(train_raw, d["frequency"], d["max_interpolation_gap"])[0]
+        val[key] = clean_series(val_raw, d["frequency"], d["max_interpolation_gap"])[0]
+        # Test scoring is causal: the pre-August tail is context only, while each
+        # window is responsible solely for its final 15-minute block.
+        baseline_raw = pd.concat([train_raw, val_raw]).sort_index()
+        baseline_clean = clean_series(
+            baseline_raw, d["frequency"], d["max_interpolation_gap"]
+        )[0]
+        test_clean = clean_series(test_raw, d["frequency"], d["max_interpolation_gap"])[0]
+        context_rows = d["window_size"] - score_block_size
+        scoring = pd.concat([baseline_clean.tail(context_rows), test_clean]).sort_index()
+        full_index = pd.date_range(
+            scoring.index.min(), scoring.index.max(), freq=d["frequency"], tz=scoring.index.tz
+        )
+        test[key] = scoring.reindex(full_index)
     scaler = fit_global_scaler(list(train.values()), d.get("scaler_max_rows", 1_000_000))
     args = (scaler, d["window_size"], d["stride"], d["max_missing_ratio"])
     return (
@@ -218,31 +189,22 @@ def predict(config, checkpoint_path, scaler_path, threshold, dataset=None, calib
         frames = {}
         split = config["splits"]
         block_size = d.get("score_block_size", d["stride"])
-        min_baseline = d.get("window_size", 288)
         for key, frame in raw.items():
-            try:
-                train_raw, val_raw, test_raw = chronological_date_split(
-                    frame, split["train_end"], split["test_start"], split["test_end"],
-                    split["timezone"], split["validation_ratio"],
-                    min_baseline_rows=min_baseline,
-                )
-                test_clean = clean_series(test_raw, d["frequency"], d["max_interpolation_gap"])[0]
-                if test_clean.dropna().empty:
-                    continue
-                baseline = clean_series(
-                    pd.concat([train_raw, val_raw]).sort_index(), d["frequency"],
-                    d["max_interpolation_gap"],
-                )[0]
-                context_rows = d["window_size"] - block_size
-                if len(baseline) < context_rows:
-                    continue
-                scoring = pd.concat([baseline.tail(context_rows), test_clean]).sort_index()
-                full_index = pd.date_range(
-                    scoring.index.min(), scoring.index.max(), freq=d["frequency"], tz=scoring.index.tz
-                )
-                frames[key] = scoring.reindex(full_index)
-            except ValueError:
-                continue
+            train_raw, val_raw, test_raw = chronological_date_split(
+                frame, split["train_end"], split["test_start"], split["test_end"],
+                split["timezone"], split["validation_ratio"],
+            )
+            baseline = clean_series(
+                pd.concat([train_raw, val_raw]).sort_index(), d["frequency"],
+                d["max_interpolation_gap"],
+            )[0]
+            test = clean_series(test_raw, d["frequency"], d["max_interpolation_gap"])[0]
+            context_rows = d["window_size"] - block_size
+            scoring = pd.concat([baseline.tail(context_rows), test]).sort_index()
+            full_index = pd.date_range(
+                scoring.index.min(), scoring.index.max(), freq=d["frequency"], tz=scoring.index.tz
+            )
+            frames[key] = scoring.reindex(full_index)
         dataset = MeterWindowDataset.from_frames(frames, joblib.load(scaler_path), d["window_size"],
                                                   d["stride"], d["max_missing_ratio"])
     model = LSTMAutoencoder(input_size=len(d["features"]), **config["model"]).to(device)

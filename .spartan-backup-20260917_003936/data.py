@@ -105,7 +105,6 @@ def chronological_date_split(
     test_end: str,
     timezone: str,
     validation_ratio: float,
-    min_baseline_rows: int = 2,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Split on local-time boundaries and keep August out of train/validation."""
 
@@ -127,11 +126,8 @@ def chronological_date_split(
 
     baseline = frame.loc[frame.index < train_end_ts]
     test = frame.loc[(frame.index >= test_start_ts) & (frame.index < test_end_ts)]
-    min_required = max(2, min_baseline_rows)
-    if len(baseline) < min_required:
-        raise ValueError(
-            f"Not enough pre-test data for train/validation splitting: got {len(baseline)} rows, minimum required is {min_required}"
-        )
+    if len(baseline) < 2:
+        raise ValueError("Not enough pre-test data for train/validation splitting")
     if test.empty:
         raise ValueError("No data in the configured test period")
 
