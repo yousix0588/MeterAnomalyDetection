@@ -1,0 +1,9 @@
+{
+  "threshold": 54.49457931518555,
+  "device": "cuda",
+  "series": 440,
+  "validation_windows": 147708,
+  "prediction_windows": 1222712,
+  "anomalies": 7858,
+  "checkpoint": "/content/best_model.pt"
+}
