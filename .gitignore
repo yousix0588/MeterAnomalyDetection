@@ -20,3 +20,10 @@ runs/
 *.pt
 *.pth
 *.joblib
+
+# Unmodified cloud snapshots retained for comparison
+legacy/cloud_snapshots/
+
+# Presentation build cache
+docs/presentation/.build/
+docs/presentation/.chart-data-*/

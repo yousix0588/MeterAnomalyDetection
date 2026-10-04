@@ -7,11 +7,11 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --time=0-04:00:00
-#SBATCH --output=/data/gpfs/projects/punim1257/Group14/runs/lstm_vae/logs/build_%j.out
-#SBATCH --error=/data/gpfs/projects/punim1257/Group14/runs/lstm_vae/logs/build_%j.err
+#SBATCH --output=/data/projects/punim1257/Group14/runs/lstm_vae/logs/build_%j.out
+#SBATCH --error=/data/projects/punim1257/Group14/runs/lstm_vae/logs/build_%j.err
 
 # ---- edit these paths for your project ----
-PROJECT_DIR=/data/gpfs/projects/punim1257/Group14
+PROJECT_DIR=/data/projects/punim1257/Group14
 
 # BOTH datasets
 DATA_PATH=(

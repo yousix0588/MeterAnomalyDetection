@@ -73,9 +73,9 @@ def validate(frame: pd.DataFrame, timezone: str) -> pd.DataFrame:
         raise ValueError("interval_start is not aligned to the 15-minute grid")
     for column in ("max_percentile", "mean_percentile"):
         values = pd.to_numeric(result[column], errors="coerce")
-        if ((values < 0) | (values > 1)).any():
+        if ((values < -1e-9) | (values > 1 + 1e-9)).any():
             raise ValueError(f"{column} must use the frozen 0..1 ECDF scale")
-        result[column] = values
+        result[column] = values.clip(0.0, 1.0)
     result["available"] = parse_bool(result["available"])
     result["is_anomaly"] = parse_bool(result["is_anomaly"])
     matrix_profile = result["model"].eq("matrix_profile")

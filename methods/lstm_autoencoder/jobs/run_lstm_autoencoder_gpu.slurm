@@ -6,9 +6,9 @@
 #SBATCH --qos=fos
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
-#SBATCH --time=0-04:00:00
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=128G
+#SBATCH --time=0-10:00:00
 #SBATCH --output=/data/projects/punim1257/Group14/runs/lstm_autoencoder/logs/ae_gpu_%j.out
 #SBATCH --error=/data/projects/punim1257/Group14/runs/lstm_autoencoder/logs/ae_gpu_%j.err
 

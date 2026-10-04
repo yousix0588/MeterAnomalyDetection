@@ -179,7 +179,7 @@ def iter_windows(
 
 
 class MeterWindowDataset(Dataset):
-    def __init__(self, frames: dict[str, np.ndarray], scaler: RobustScaler,
+    def __init__(self, frames: dict[str, np.ndarray | torch.Tensor], scaler: RobustScaler,
                  indices: list[tuple[str, int, int]], metadata: list[WindowMeta]):
         self.frames = frames
         self.scaler = scaler
@@ -195,13 +195,21 @@ class MeterWindowDataset(Dataset):
         stride: int,
         max_missing_ratio: float,
     ) -> "MeterWindowDataset":
-        arrays: dict[str, np.ndarray] = {}
+        arrays: dict[str, np.ndarray | torch.Tensor] = {}
         indices: list[tuple[str, int, int]] = []
         metadata: list[WindowMeta] = []
         for series_id, frame in frames.items():
             values = frame.to_numpy(dtype=np.float32)
-            arrays[series_id] = values
             valid_rows = np.isfinite(values).all(axis=1)
+            # Complete series can be scaled once without changing window values.
+            # Keep per-window interpolation for incomplete series so future rows
+            # outside a window cannot alter its score.
+            if valid_rows.all():
+                arrays[series_id] = torch.from_numpy(
+                    scaler.transform(values).astype(np.float32)
+                )
+            else:
+                arrays[series_id] = values
             for start in range(0, len(frame) - window_size + 1, stride):
                 stop = start + window_size
                 if 1.0 - valid_rows[start:stop].mean() > max_missing_ratio:
@@ -217,7 +225,10 @@ class MeterWindowDataset(Dataset):
 
     def __getitem__(self, index: int) -> torch.Tensor:
         series_id, start, stop = self.indices[index]
-        chunk = pd.DataFrame(self.frames[series_id][start:stop]).interpolate(
+        series = self.frames[series_id]
+        if isinstance(series, torch.Tensor):
+            return series[start:stop]
+        chunk = pd.DataFrame(series[start:stop]).interpolate(
             limit_direction="both"
         ).ffill().bfill()
         scaled = self.scaler.transform(chunk.to_numpy()).astype(np.float32)

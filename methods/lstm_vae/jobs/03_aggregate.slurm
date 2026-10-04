@@ -7,10 +7,10 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=8G
 #SBATCH --time=0-00:30:00
-#SBATCH --output=/data/gpfs/projects/punim1257/Group14/runs/lstm_vae/logs/aggregate_%j.out
-#SBATCH --error=/data/gpfs/projects/punim1257/Group14/runs/lstm_vae/logs/aggregate_%j.err
+#SBATCH --output=/data/projects/punim1257/Group14/runs/lstm_vae/logs/aggregate_%j.out
+#SBATCH --error=/data/projects/punim1257/Group14/runs/lstm_vae/logs/aggregate_%j.err
 
-PROJECT_DIR=/data/gpfs/projects/punim1257/Group14
+PROJECT_DIR=/data/projects/punim1257/Group14
 CODE_DIR=$PROJECT_DIR/methods/lstm_vae/src
 OUT_DIR=$PROJECT_DIR/runs/lstm_vae/august
 
