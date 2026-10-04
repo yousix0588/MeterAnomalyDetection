@@ -14,7 +14,7 @@ runs/
 *.out
 *.err
 *.log
-*csv
+*.csv
 
 # Generated model artifacts
 *.pt

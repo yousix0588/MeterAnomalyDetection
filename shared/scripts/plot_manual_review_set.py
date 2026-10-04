@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-plt.rcParams["font.family"] = "Microsoft YaHei"
+plt.rcParams["font.family"] = "DejaVu Sans"
 plt.rcParams["axes.unicode_minus"] = False
 
 
@@ -27,11 +27,20 @@ MODELS = (
     ("rpca", "RPCA", "#B279A2"),
 )
 CATEGORY_NAMES = {
-    "four_model_consensus": "四模型一致",
-    "three_model_consensus": "三模型一致",
-    "matrix_profile_only": "仅 Matrix Profile",
-    "long_event": "持续异常区间",
+    "four_model_consensus": "Four models flagged",
+    "three_model_consensus": "Three models flagged",
+    "matrix_profile_only": "Only Matrix Profile flagged",
+    "long_event": "Sustained model flag",
 }
+MODEL_NAMES = {model: label for model, label, _ in MODELS}
+
+
+def category_name(case: pd.Series) -> str:
+    if case["category"] == "single_model_only":
+        return f"Only {MODEL_NAMES[str(case['source_model'])]} flagged"
+    if case["category"] == "long_event":
+        return f"Sustained {MODEL_NAMES[str(case['source_model'])]} flag"
+    return CATEGORY_NAMES.get(str(case["category"]), str(case["category"]))
 
 
 def numeric(frame: pd.DataFrame, column: str) -> np.ndarray:
@@ -52,7 +61,7 @@ def figure_for_case(case: pd.Series, timeline: pd.DataFrame,
     x15 = numeric(interval, "minutes_from_anchor") / 60.0
     x5 = numeric(points, "minutes_from_anchor") / 60.0
     anchor = str(case["anchor_start"])
-    category = CATEGORY_NAMES.get(str(case["category"]), str(case["category"]))
+    category = category_name(case)
     event_hours = pd.to_numeric(case.get("event_duration_minutes"), errors="coerce") / 60.0
 
     fig, axes = plt.subplots(
@@ -60,7 +69,9 @@ def figure_for_case(case: pd.Series, timeline: pd.DataFrame,
         gridspec_kw={"height_ratios": [2.25, 1.35, 1.85, 1.1], "hspace": 0.12},
     )
     fig.patch.set_facecolor("white")
-    fig.suptitle(f"{case_id}  |  {case['series_id']}  |  {category}", y=0.985,
+    flagged_count = int(case["flagged_model_count"])
+    fig.suptitle(f"{case_id}  |  {case['series_id']}  |  {category}  |  {flagged_count}/4 flagged at anchor",
+                 y=0.985,
                  fontsize=15, fontweight="medium")
     subtitle = f"Anchor: {anchor}   |   24 h before / 24 h after"
     if pd.notna(event_hours):
@@ -137,16 +148,18 @@ def make_index(cases: pd.DataFrame, output: Path) -> None:
     cards = []
     for _, case in cases.iterrows():
         case_id = str(case["case_id"])
-        category = CATEGORY_NAMES.get(str(case["category"]), str(case["category"]))
+        category = category_name(case)
         series = html.escape(str(case["series_id"]))
         anchor = html.escape(str(case["anchor_start"]))
+        flagged_count = int(case["flagged_model_count"])
         cards.append(
-            f'<article><a href="{case_id}.png"><img src="{case_id}.png" alt="{case_id} 时间序列图" loading="lazy"></a>'
-            f'<p><strong>{case_id}</strong> · {html.escape(category)} · {series}<br><small>{anchor}</small></p></article>'
+            f'<article><a href="{case_id}.png"><img src="{case_id}.png" alt="{case_id} time-series chart" loading="lazy"></a>'
+            f'<p><strong>{case_id}</strong> · {html.escape(category)} · {flagged_count}/4 flagged at anchor · {series}'
+            f'<br><small>{anchor} · Pending manual review</small></p></article>'
         )
     document = """<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>8 月人工核验案例图</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>August manual-review case charts</title>
 <style>
 body{font-family:Arial,"Microsoft YaHei",sans-serif;margin:0 auto;max-width:1440px;padding:20px;color:#20252a;background:#fff}
 h1{font-size:22px;margin:0 0 8px}p.note{color:#555;margin:0 0 20px;line-height:1.5}
@@ -155,8 +168,8 @@ article{min-width:0;border-bottom:1px solid #ddd;padding-bottom:12px}article img
 article p{margin:8px 0 0;line-height:1.5;font-size:14px}small{color:#666}
 @media(max-width:800px){section{grid-template-columns:1fr}}
 </style></head><body>
-<h1>8 月人工核验案例图</h1>
-<p class="note">每张图展示事件起点前后各 24 小时。上两栏为原始功率、电流；第三栏为四模型最大百分位；底栏为逐时段报警标记。红色虚线是所选时段。点击图片可查看原尺寸。Matrix Profile 的相邻 15 分钟分数来自同一个 30 分钟结果。</p>
+<h1>August manual-review case charts</h1>
+<p class="note">Each chart shows 24 hours before and after the selected interval. The top panels show raw power and current; the third panel shows each model's maximum percentile; the bottom panel shows model flags by interval. The red dashed line marks the selected interval. Every case is pending manual review: a model flag is not a verified fault. Click a chart to open the full-size image. Matrix Profile repeats each native 30-minute score on two 15-minute intervals.</p>
 <section>""" + "\n".join(cards) + "</section></body></html>"
     (output / "index.html").write_text(document, encoding="utf-8")
 
@@ -164,7 +177,7 @@ article p{margin:8px 0 0;line-height:1.5;font-size:14px}small{color:#666}
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--review-dir", type=Path,
-                        default=ROOT / "runs/ensemble/manual_review_august_v1")
+                        default=ROOT / "runs/ensemble/manual_review_august_v3")
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
     review = args.review_dir.resolve()

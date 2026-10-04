@@ -25,6 +25,7 @@ REVIEW_CATEGORIES = (
     "three_model_consensus",
     "matrix_profile_only",
     "long_event",
+    "single_model_only",
 )
 RAW_METRICS = ("pRealKw", "iRMSMax", "vRMSMax", "powerFactor")
 DEFAULT_ROOT = Path(__file__).resolve().parents[2]
@@ -82,7 +83,8 @@ def score_groups(path: Path):
         yield previous, group
 
 
-def candidate(series_id: str, interval: str, rows: dict, category: str) -> dict:
+def candidate(series_id: str, interval: str, rows: dict, category: str,
+              source_model: str = "") -> dict:
     available = {model for model, row in rows.items() if is_true(row["available"])}
     flagged = {model for model, row in rows.items() if is_true(row["is_anomaly"])}
     percentiles = [number(row.get("max_percentile")) or 0.0 for row in rows.values()]
@@ -94,8 +96,9 @@ def candidate(series_id: str, interval: str, rows: dict, category: str) -> dict:
         "available_models": available,
         "flagged_models": flagged,
         "priority": sum(percentiles),
-        "tie_break": stable_number(series_id, interval, category),
-        "source_model": "",
+        "tie_break": stable_number(series_id, interval, category, source_model)
+        if source_model else stable_number(series_id, interval, category),
+        "source_model": source_model,
         "event_id": "",
         "event_start": "",
         "event_end": "",
@@ -107,6 +110,9 @@ def sample_score_candidates(path: Path, reservoir_size: int = 4000):
     four: list[dict] = []
     three: list[dict] = []
     mp_reservoir: list[tuple[int, str, str, dict]] = []
+    single_reservoirs: dict[str, list[tuple[int, str, str, dict]]] = {
+        model: [] for model in MODELS if model != "matrix_profile"
+    }
     population = Counter()
     for (series_id, interval), rows in score_groups(path):
         available = {model for model, row in rows.items() if is_true(row["available"])}
@@ -128,8 +134,23 @@ def sample_score_candidates(path: Path, reservoir_size: int = 4000):
                 heapq.heappush(mp_reservoir, entry)
             elif rank < -mp_reservoir[0][0]:
                 heapq.heapreplace(mp_reservoir, entry)
+        elif len(flagged) == 1:
+            model = next(iter(flagged))
+            population[f"{model}_only"] += 1
+            item = candidate(series_id, interval, rows, "single_model_only", model)
+            rank = item["tie_break"]
+            entry = (-rank, series_id, interval, item)
+            reservoir = single_reservoirs[model]
+            if len(reservoir) < reservoir_size:
+                heapq.heappush(reservoir, entry)
+            elif rank < -reservoir[0][0]:
+                heapq.heapreplace(reservoir, entry)
     mp_only = [entry[3] for entry in mp_reservoir]
-    return four, three, mp_only, population
+    single_only = {
+        model: [entry[3] for entry in reservoir]
+        for model, reservoir in single_reservoirs.items()
+    }
+    return four, three, mp_only, single_only, population
 
 
 def select_diverse(candidates: list[dict], quota: int, already: list[dict]) -> list[dict]:
@@ -185,8 +206,8 @@ def event_candidates(path: Path) -> dict[str, list[dict]]:
 
 
 def choose_cases(scores: Path, events: Path, per_category: int,
-                 long_per_model: int, context: timedelta):
-    four, three, mp_only, population = sample_score_candidates(scores)
+                 long_per_model: int, single_per_model: int, context: timedelta):
+    four, three, mp_only, single_only, population = sample_score_candidates(scores)
     def has_full_model_context(item: dict) -> bool:
         return (item["anchor"] - context >= AUGUST_START
                 and item["anchor"] + context <= SEPTEMBER_START)
@@ -224,6 +245,14 @@ def choose_cases(scores: Path, events: Path, per_category: int,
         eligible = [item for item in long_candidates[model] if has_full_model_context(item)]
         selected.extend(select_diverse(eligible, long_per_model, selected))
 
+    # Append new cases after the legacy 26 so their case IDs remain stable.
+    for model in MODELS:
+        if model == "matrix_profile":
+            continue
+        eligible = [item for item in single_only[model] if has_full_model_context(item)]
+        eligible.sort(key=lambda item: item["tie_break"])
+        selected.extend(select_diverse(eligible, single_per_model, selected))
+
     for index, item in enumerate(selected, start=1):
         item["case_id"] = f"MR{index:03d}"
     return selected, population
@@ -258,6 +287,11 @@ def collect_scores(path: Path, cases: list[dict], context: timedelta):
             raise ValueError(f"Three-model case changed: {item['case_id']}")
         if item["category"] == "matrix_profile_only" and item["flagged_models"] != {"matrix_profile"}:
             raise ValueError(f"Matrix Profile-only case changed: {item['case_id']}")
+        if item["category"] == "single_model_only" and (
+            len(item["available_models"]) != 4
+            or item["flagged_models"] != {item["source_model"]}
+        ):
+            raise ValueError(f"Single-model case changed: {item['case_id']}")
         if item["category"] == "long_event" and item["source_model"] not in item["flagged_models"]:
             raise ValueError(f"Long-event start is not flagged: {item['case_id']}")
     return result
@@ -367,14 +401,17 @@ def build_outputs(cases: list[dict], scores_by_case: dict, raw_rows: list[dict],
         end = anchor + context
         category = item["category"]
         if category == "long_event":
-            reason = f"{item['source_model']}连续标记{item['event_duration_minutes']}分钟；取事件起点"
+            reason = (f"{item['source_model']} flagged continuously for "
+                      f"{item['event_duration_minutes']} minutes; anchored at event start")
         elif category == "matrix_profile_only":
-            day_type = "周末" if anchor.weekday() >= 5 else "工作日"
-            reason = f"四模型均可用，仅Matrix Profile标记；{day_type}"
+            day_type = "weekend" if anchor.weekday() >= 5 else "weekday"
+            reason = f"All four models available; only Matrix Profile flagged; {day_type}"
+        elif category == "single_model_only":
+            reason = f"All four models available; only {item['source_model']} flagged"
         elif category == "three_model_consensus":
-            reason = "四模型均可用，其中三模型同时标记"
+            reason = "All four models available; three flagged at the anchor interval"
         else:
-            reason = "四模型均可用且同时标记"
+            reason = "All four models available and flagged at the anchor interval"
         count = raw_counts[case_id]
         expected = int((2 * context).total_seconds() / 300)
         case_row = {
@@ -449,16 +486,19 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--per-category", type=int, default=6)
     parser.add_argument("--long-per-model", type=int, default=2)
+    parser.add_argument("--single-per-model", type=int, default=5,
+                        help="Additional single-model cases per non-MP model")
     parser.add_argument("--context-hours", type=int, default=24)
     args = parser.parse_args()
-    if args.per_category < 1 or args.long_per_model < 1 or args.context_hours < 1:
-        parser.error("Sample counts and context hours must be positive")
+    if (args.per_category < 1 or args.long_per_model < 1
+            or args.single_per_model < 0 or args.context_hours < 1):
+        parser.error("Sample counts/context must be positive; single-per-model may be zero")
 
     root = args.root.resolve()
     scores = root / "runs/ensemble/all_models_scores_15min.csv"
     events = root / "runs/ensemble/all_models_events.csv"
     raw_root = root / "data/processed/meter_csvs"
-    output = (args.output_dir or root / "runs/ensemble/manual_review_august_v1").resolve()
+    output = (args.output_dir or root / "runs/ensemble/manual_review_august_v3").resolve()
     for path in (scores, events):
         if not path.is_file():
             raise FileNotFoundError(path)
@@ -469,7 +509,8 @@ def main() -> int:
 
     context = timedelta(hours=args.context_hours)
     cases, population = choose_cases(
-        scores, events, args.per_category, args.long_per_model, context
+        scores, events, args.per_category, args.long_per_model,
+        args.single_per_model, context
     )
     if not cases:
         raise ValueError("No review cases meet the selection rules")
@@ -499,11 +540,15 @@ def main() -> int:
             "three_model_consensus": "Exactly three flags among four available models; severity and device diversity",
             "matrix_profile_only": "Only Matrix Profile flags among four available models; deterministic hash sample, half weekend",
             "long_event": "Longest derived events at least six hours; up to two per model, device diversity",
+            "single_model_only": "Only the named LSTM AE, LSTM-VAE or RPCA model flags among four available models; deterministic hash sample and device diversity",
         },
         "candidate_population": dict(population),
         "selected_cases_by_category": dict(Counter(row["category"] for row in case_rows)),
         "selected_long_events_by_model": dict(Counter(
             row["source_model"] for row in case_rows if row["category"] == "long_event"
+        )),
+        "selected_single_model_cases_by_model": dict(Counter(
+            row["source_model"] for row in case_rows if row["category"] == "single_model_only"
         )),
         "case_count": len(case_rows),
         "timeline_15min_rows": len(timeline_rows),
