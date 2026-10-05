@@ -43,6 +43,32 @@ def _assert_unique(frame: pd.DataFrame, columns: list[str], label: str) -> None:
         raise ValueError(f"Duplicate {label}: {examples}")
 
 
+def _coalesce_refined_events(frame: pd.DataFrame) -> pd.DataFrame:
+    """Separate coarse candidates can refine to the same physical interval.
+
+    Merge only matching identities/types/confidence, retaining BOTH original
+    records as evidence. Conflicting IDs still fail the usual integrity check.
+    Raw shard files remain untouched.
+    """
+    if frame.empty or not frame.event_id.duplicated().any():
+        return frame
+    rows = []
+    identity = ["device_id", "channel_idx", "start_time", "end_time", "event_type", "confidence"]
+    for event_id, group in frame.groupby("event_id", sort=False):
+        row = group.iloc[0].copy()
+        if len(group) > 1:
+            if len(group[identity].drop_duplicates()) != 1:
+                raise ValueError(f"Conflicting duplicate event id: {event_id}")
+            evidence = json.loads(row["evidence"])
+            evidence["refined_candidate_records"] = json.loads(group.to_json(orient="records"))
+            row["evidence"] = json.dumps(evidence, sort_keys=True)
+            for column in ("short_percentile", "medium_percentile", "magnitude_percentile"):
+                row[column] = pd.to_numeric(group[column], errors="raise").max()
+            row["dominant_scale"] = "short" if row["short_percentile"] >= row["medium_percentile"] else "medium"
+        rows.append(row)
+    return pd.DataFrame(rows).reset_index(drop=True)
+
+
 def _mark_common_mode(events: pd.DataFrame, day_status: pd.DataFrame) -> pd.DataFrame:
     if events.empty:
         result = events.copy()
@@ -171,6 +197,13 @@ def aggregate_shards(
     scores_30min = _concat(_read_shard_frames(shards_root, expected_shards, "scores_30min.csv"))
     scores_15min = _concat(_read_shard_frames(shards_root, expected_shards, "scores_15min.csv"))
 
+    events = _coalesce_refined_events(events)
+    candidates = _coalesce_refined_events(candidates)
+    # Channel counts must describe the coalesced output, not coarse duplicates.
+    for frame, column in ((events, "event_count"), (candidates, "candidate_count")):
+        counts = frame.groupby(["device_id", "channel_idx"]).size().to_dict()
+        channel_status[column] = [int(counts.get((row.device_id, row.channel_idx), 0))
+                                  for row in channel_status.itertuples()]
     _assert_unique(events, ["event_id"], "reportable event ids")
     _assert_unique(candidates, ["event_id"], "candidate event ids")
     _assert_unique(channel_status, ["device_id", "channel_idx"], "channel statuses")

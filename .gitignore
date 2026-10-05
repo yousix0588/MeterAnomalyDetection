@@ -9,6 +9,9 @@ venv_mp/
 data/raw/
 data/processed/
 runs/
+# September raw delivery kept locally; never upload the dataset with code.
+/AugSep_meters/
+/AugSep_meters.zip
 
 # Scheduler and training logs
 *.out

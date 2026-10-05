@@ -67,8 +67,9 @@ def same_slot_percentiles(
         reference = reference[np.isfinite(reference)]
         if not np.isfinite(score) or reference.size == 0:
             continue
-        lower = np.count_nonzero(reference < score)
-        equal = np.count_nonzero(np.isclose(reference, score, rtol=1e-9, atol=1e-12))
+        tied = np.isclose(reference, score, rtol=1e-9, atol=1e-12)
+        lower = np.count_nonzero((reference < score) & ~tied)
+        equal = np.count_nonzero(tied)
         result[slot] = (lower + 0.5 * equal) / reference.size * 100.0
     return pd.Series(result, index=target.index, name="magnitude_percentile")
 
@@ -115,7 +116,18 @@ def score_day(
     target_day: date,
     context: ChannelContext,
     config: DetectionConfig,
+    calibration_cache: dict | None = None,
 ) -> DayScores:
+    # This cache belongs to one channel's fixed baseline. Target values never
+    # enter it; weekdays/weekends have distinct reference-date keys.
+    def frozen_calibration(arrays, window, scale):
+        key = (scale, window, tuple(sorted(arrays)))
+        if calibration_cache is None:
+            return calibrate_leave_one_day_out(arrays, window)
+        if key not in calibration_cache:
+            calibration_cache[key] = calibrate_leave_one_day_out(arrays, window)
+        return calibration_cache[key]
+
     reference_30m = select_reference_days(
         prepared.history_30m,
         target_day,
@@ -140,7 +152,7 @@ def score_day(
         ("medium", config.medium_window_points),
     ):
         arrays = {day: frame["pRealKw"].to_numpy() for day, frame in reference_30m.items()}
-        calibration = calibrate_leave_one_day_out(arrays, window)
+        calibration = frozen_calibration(arrays, window, name)
         profile = matrix_profile_ab_join(target_30m, arrays, window)
         profiles[name] = profile
         window_percentiles = empirical_percentiles(profile.scores, calibration)
@@ -156,7 +168,7 @@ def score_day(
         daily_arrays = {day: values[solar_active] for day, values in daily_arrays.items()}
         daily_target = target_30m[solar_active]
         daily_window = int(solar_active.sum())
-    daily_calibration = calibrate_leave_one_day_out(daily_arrays, daily_window)
+    daily_calibration = frozen_calibration(daily_arrays, daily_window, "daily")
     daily_profile = matrix_profile_ab_join(
         daily_target,
         daily_arrays,

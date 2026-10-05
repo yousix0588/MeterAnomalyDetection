@@ -320,3 +320,17 @@ Python代码和YAML中的数据、输出路径已使用项目内相对路径，�
 ```
 
 这些根路径后续应改为统一的可覆盖环境变量；其下的数据、代码和结果目录已经遵循本README中的结构。
+
+## 10. 本地运行 9 月 Matrix Profile
+
+本地入口为 `shared/scripts/run_matrix_profile_local.py`，复用现有多尺度 Matrix Profile、分片汇总及 `build_ensemble_features.py` 的校验、特征和事件逻辑。完整命令、字段解释和缺测处理见 [本地运行说明](docs/matrix_profile_local.md)。
+
+在 `group14reshape` 根目录，用已准备好的本地环境执行：
+
+```powershell
+& ./.venv/matrix_profile/Scripts/python.exe shared/scripts/run_matrix_profile_local.py --workers 4
+```
+
+默认读取 `AugSep_meters/` 中的 **2026-09-01（含）至 2026-10-01（不含）**，从原有 `data/processed/meter_csvs/` 提取 **2026-07-01 至 2026-07-31** 作为冻结基线。保留 5 分钟输入的 12 列格式，不修改原始数据或原有 8 月结果。准备后的输入写入 `data/processed/matrix_profile/september_fixed_july_local/`，结果写入 `runs/matrix_profile/results/september_fixed_july_local/`。
+
+中断后用相同参数追加 `--resume`；参数、源文件大小/修改时间、代码或元数据变化时必须使用新的输出与输入目录。统一结果位于该结果目录的 `aligned/`，仍为长表、特征宽表、事件表和运行摘要四个 CSV。本次只运行 Matrix Profile，另外三个模型的 `available` 为 `False`，不能视为四模型集成完成。

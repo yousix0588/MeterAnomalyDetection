@@ -14,6 +14,7 @@ from anomalies.multiscale.models import (
     DayDetectionStatus,
 )
 from anomalies.multiscale.preprocessing import (
+    _normalise_index,
     baseline_admission_status,
     prepare_channel,
     prepare_rolling_channel,
@@ -31,7 +32,7 @@ def _interval_score_records(scores, context, config) -> list[dict]:
     magnitude_mean = magnitude["mean"].to_numpy(dtype=float) / 100.0
     count = min(len(short), len(medium), len(magnitude_max))
     calibration_version = (
-        f"fixed_{config.baseline_start}_{config.baseline_end}_v1"
+        f"fixed_{config.baseline_start}_{config.baseline_end}_v2"
         if config.history_mode == "fixed"
         else "rolling_history_not_frozen"
     )
@@ -86,10 +87,32 @@ class MultiscaleAnomalyDetector:
 
         preparation = prepare_channel(frame, self.config, context.category_name)
         if preparation.status is not ChannelStatus.READY or preparation.data is None:
+            data = _normalise_index(frame, self.config.timezone)
+            counts = (
+                data["pRealKw"].notna().groupby(data.index.date).sum().to_dict()
+                if "pRealKw" in data else {}
+            )
+            minimum = int(np.ceil(288 * self.config.valid_day_ratio))
+            valid_history_days = sum(
+                count >= minimum for day, count in counts.items()
+                if self.config.baseline_start <= day <= self.config.baseline_end
+            )
+            statuses = []
+            day = self.config.detection_start
+            while day <= self.config.detection_end:
+                missing = counts.get(day, 0) < minimum
+                statuses.append(DayDetectionStatus(
+                    date=day,
+                    status=ChannelStatus.MISSING_TARGET if missing else preparation.status,
+                    valid_history_days=valid_history_days,
+                    reason="Target day missing or below the valid-day coverage requirement" if missing else preparation.reason,
+                ))
+                day += timedelta(days=1)
             return ChannelDetectionResult(
                 context=context,
                 status=preparation.status,
                 reason=preparation.reason,
+                day_statuses=statuses,
             )
 
         prepared = preparation.data
@@ -98,6 +121,7 @@ class MultiscaleAnomalyDetector:
         )
         events = []
         interval_scores = []
+        calibration_cache = {}
         try:
             for target_day in sorted(prepared.target_5m):
                 quality_events = detect_flatline_events(
@@ -106,7 +130,9 @@ class MultiscaleAnomalyDetector:
                     prepared.history_5m,
                     context,
                 )
-                scores = score_day(prepared, target_day, context, self.config)
+                scores = score_day(
+                    prepared, target_day, context, self.config, calibration_cache
+                )
                 interval_scores.extend(_interval_score_records(scores, context, self.config))
                 behavior_events = build_day_events(
                     scores,
@@ -136,11 +162,27 @@ class MultiscaleAnomalyDetector:
 
         reportable = [event for event in events if event.confidence is not Confidence.CANDIDATE]
         candidates = [event for event in events if event.confidence is Confidence.CANDIDATE]
+        day_statuses = []
+        target_day = self.config.detection_start
+        while target_day <= self.config.detection_end:
+            if target_day in prepared.invalid_target_dates:
+                status = ChannelStatus.MISSING_TARGET
+                reason = "Target day missing or below the valid-day coverage requirement"
+            else:
+                detected = any(event.start_time.date() == target_day for event in reportable)
+                status = ChannelStatus.DETECTED if detected else ChannelStatus.NO_EVENT
+                reason = ""
+            day_statuses.append(DayDetectionStatus(
+                date=target_day, status=status,
+                valid_history_days=len(prepared.history_5m), reason=reason,
+            ))
+            target_day += timedelta(days=1)
         return ChannelDetectionResult(
             context=context,
             status=ChannelStatus.DETECTED if reportable else ChannelStatus.NO_EVENT,
             events=reportable,
             candidate_events=candidates,
+            day_statuses=day_statuses,
             interval_scores=interval_scores,
             reason=(
                 f"Skipped invalid target days: {prepared.invalid_target_dates}"
