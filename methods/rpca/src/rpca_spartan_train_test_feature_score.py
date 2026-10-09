@@ -338,11 +338,41 @@ def main():
     train_point, train_daily = rms_point_score(train_resid)
     test_point, test_daily = rms_point_score(test_resid)
 
+    # Existing multivariate residual score.
     point_threshold = float(
         np.quantile(train_point.ravel(), args.threshold_quantile)
     )
     daily_threshold = float(
         np.quantile(train_daily, args.threshold_quantile)
+    )
+
+    # Feature-specific residual score for pRealKw.
+    # Residuals are in RobustScaler-standardised space.
+    train_resid_3d = train_resid.reshape(
+        train_resid.shape[0],
+        POINTS_PER_DAY,
+        len(FEATURES),
+    )
+    test_resid_3d = test_resid.reshape(
+        test_resid.shape[0],
+        POINTS_PER_DAY,
+        len(FEATURES),
+    )
+
+    preal_idx = FEATURES.index("pRealKw")
+
+    train_preal_score = np.abs(
+        train_resid_3d[:, :, preal_idx]
+    )
+    test_preal_score = np.abs(
+        test_resid_3d[:, :, preal_idx]
+    )
+
+    preal_threshold = float(
+        np.quantile(
+            train_preal_score.ravel(),
+            args.threshold_quantile,
+        )
     )
 
     # Daily scores.
@@ -364,10 +394,20 @@ def main():
     ]
     point_df = pd.DataFrame({
         "timestamp": timestamps,
+
+        # Existing six-feature RPCA score.
         "anomaly_score": test_point.reshape(-1),
+
+        # pRealKw-specific reconstruction residual.
+        "pRealKw_score": test_preal_score.reshape(-1),
     })
+
     point_df["is_anomaly"] = (
         point_df["anomaly_score"] > point_threshold
+    )
+
+    point_df["is_pRealKw_anomaly"] = (
+        point_df["pRealKw_score"] > preal_threshold
     )
     point_df.to_csv(
         outdir / f"{meter_channel}_point_scores.csv",
@@ -385,8 +425,19 @@ def main():
         "rpca_iterations": info["iterations"],
         "point_threshold": point_threshold,
         "daily_threshold": daily_threshold,
+
+        "pRealKw_threshold": preal_threshold,
+
         "n_anomalous_points": int(
             np.sum(test_point > point_threshold)
+        ),
+
+        "n_pRealKw_anomalous_points": int(
+            np.sum(test_preal_score > preal_threshold)
+        ),
+
+        "max_pRealKw_score": float(
+            np.max(test_preal_score)
         ),
         "n_anomalous_days": int(
             np.sum(test_daily > daily_threshold)
