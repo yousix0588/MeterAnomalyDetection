@@ -87,3 +87,22 @@ non_frozen_model_sidecars:
     ensemble_eligible: false
     native_event_semantics: consecutive_5m_flags_without_gap_bridging
     aligned_event_semantics: occupied_15m_bins_not_continuous_fault_duration
+
+# Frozen independent variants are not silently registered as additional voters.
+independent_model_sidecars:
+  attention_lstm_autoencoder:
+    architecture: lstm_autoencoder_with_temporal_attention_and_gelu
+    native_resolution_minutes: 5
+    interval_minutes: 15
+    window_points: 288
+    stride_points: 3
+    score_tail_points: 3
+    calibration_source: held_out_calibration
+    calibration_version: original_model_binding
+    training_cutoff_field: training_end_exclusive
+    approximation_field: calibration_approximate
+    unavailable_anomaly_flag: null
+    missing_context: unavailable_not_zero_filled
+    join_keys: [model, series_id, interval_start]
+    event_join_keys: [model, event_id]
+    ensemble_eligible: false

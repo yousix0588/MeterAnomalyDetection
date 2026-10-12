@@ -2,6 +2,8 @@
 
 本项目原有四种独立的电力数据异常检测方法：LSTM Autoencoder、LSTM-VAE、RPCA 和 Multi-scale Matrix Profile。仓库已经按照配置、数据、模型代码、集群任务、运行结果和公共工具重新组织。四个模型保留各自的原生输出，同时生成统一的15分钟输出，供后续集成学习使用。新增LOF已按相同输入与时间键接入，但保留批量拟合方式，作为独立比较输出，暂不加入冻结ECDF的四模型融合。
 
+另保留独立的 Attention LSTM AE 新版本，提供单独的训练、冻结测试重放和新时间段推理入口；不覆盖原LSTM，也不自动加入原四模型融合。
+
 ## 1. 目录结构
 
 ```text
@@ -13,12 +15,14 @@ group14reshape/
 |   `-- manifests/                   # 数据与集群任务清单
 |-- docs/                            # 项目文档
 |-- legacy/                          # 本地备份，不参与运行/测试，不提交Git
-|   `-- lof_import/                  # 上传的LOF仓库原件，仅作备份
+|   |-- lof_import/                  # 上传的LOF仓库原件，仅作备份
+|   `-- attention_lstm_import/       # 上传的Attention代码及压缩包，仅作备份
 |-- methods/
 |   |-- lstm_autoencoder/
 |   |-- lstm_vae/
 |   |-- rpca/
 |   |-- lof/                        # LOF批量检测与独立对齐输出
+|   |-- attention_lstm_autoencoder/ # 独立Attention版本及冻结新数据推理
 |   `-- matrix_profile/
 |-- runs/                            # 模型、日志、图片和检测结果
 `-- shared/
@@ -516,3 +520,67 @@ manual_review/
 ```
 
 可用 `--series-id` 选择具体通道，`--dataset-profile` 切换独立数据集配置，`--plots` 额外生成五张英文统计图。相对路径统一从仓库根解析，非空结果目录拒绝覆盖，原始数据、旧结果和现有四模型功能保持不变。LOF依赖可复用当前本地Matrix Profile环境，不改装已有环境；其他机器可根据 `methods/lof/requirements.txt` 配置独立环境。
+
+## 14. 独立Attention LSTM AE：代码结构与新时间段推理
+
+队友代码的实际网络是LSTM编码器＋时间注意力＋GELU隐层投影＋LSTM解码器，已经独立接入 `methods/attention_lstm_autoencoder/`。原 `methods/lstm_autoencoder/`、其他模型、旧结果和默认四模型集合保持不变。旧LSTM权重不能直接加载到Attention结构；若已有与此结构匹配的训练包，可直接复用，不必重新训练。
+
+上传的 `lstmaecodes/` 原件和 `codes.zip` 已完整归档到 `legacy/attention_lstm_import/`，只作本地备份，不参与运行或测试；当前执行代码全部位于新方法目录。原件归档前后逐文件哈希一致，没有删除原始代码。
+
+| 位置 | 用途 |
+| --- | --- |
+| `methods/attention_lstm_autoencoder/src/` | 保留队友的网络、分片训练、恢复、独立标定和冻结测试重放；输出模型名与旧LSTM分开 |
+| `methods/attention_lstm_autoencoder/project.py` | 相对路径、训练输入视图、窗口约束、数值C通道排序映射 |
+| `methods/attention_lstm_autoencoder/inference.py` | 只读取冻结模型／缩放器／ECDF，检测新的时间段 |
+| `methods/attention_lstm_autoencoder/train_by_category.py` | 按类别分组训练，每类独立输入视图、缓存和结果目录 |
+| `methods/attention_lstm_autoencoder/jobs/` | 独立Slurm推理模板，不提交或更改现有作业 |
+| `configs/attention_lstm_autoencoder.yaml` | 新训练实验的完整候选配置，不代表队友真实训练参数 |
+| `configs/attention_lstm_autoencoder_inference.json` | 九月共享数据配置、冻结类别包和独立结果路径 |
+| `shared/scripts/run_attention_lstm_autoencoder.py` | 项目级统一入口，可从任意工作目录调用 |
+
+### 14.1 训练与推理必须分开
+
+原生 `prepare/train/predict` 保留Linux文件锁、信号和分片恢复流程，仍要求 `train_end == test_start`，测试最初没有自身24小时历史时保留不可用区间。`predict` 只重放原冻结测试集，不能通过修改日期把七月训练模型直接挪到九月。训练入口创建排除 `_manifest.csv` 的只读链接视图，不移动或重写原数据，然后保留队友原生的重采样、重复处理及有界插值规则。
+
+新增 `infer` 不调用训练、缩放器拟合或校准。默认读取第12节的共享数据，将七月冻结截止 `2026-08-01` 与九月检测 `[2026-09-01, 2026-10-01)` 分离；使用紧邻测试前的8月31日观测作为上下文，不拿七月尾部替代。窗口288个5分钟点、步长3点，只对最后3点计算Max、Mean和总体Std。首区间实际需要285个历史点（23小时45分钟），完整一天上下文足以提供这些点；不足时留空，不补零、不平摊24小时分数。
+
+推理延续训练包声明的有界内部插值，保留原始观测覆盖率，不能把插值结果全写成真实观测。这是离线插值，不宣称无未来观测的严格在线检测。输入使用原共享12列格式，重复／错网格／无限值通过共享工具拒绝，不重算正向或反向功率。
+
+### 14.2 队友需要提供的训练包
+
+默认分别将类别1／2／4／5的真实产物放到：
+
+```text
+runs/attention_lstm_autoencoder/models/category_<id>/
+  best_model.pt
+  config.json
+  scaler.json
+  metadata.json
+  calibration/max_sorted.npy
+  calibration/mean_sorted.npy
+```
+
+元数据须为这份代码的完成训练产物，提供模型／缩放器／校准数组哈希、训练划分、冻结绑定、阈值、采样数量与近似标记。入口验证特征顺序、模型／评分参数、训练截止和文件完整性；权重采用安全加载及严格结构匹配，不用旧权重部分加载后留下随机注意力参数。原训练方法使用训练前的独立标定集，与旧LSTM训练分数ECDF不同，保留 `held_out_calibration` 声明，不伪装成相同标定方法。
+
+当前预检查能识别440个共享通道，其中404个属于默认四个类别，36个类别未配置。真实权重包及当前环境PyTorch尚未提供，因此不能执行真实神经网络推理。支持类别缺包时在生成结果之前停止；未配置类别的状态和分数保持不可用，不视为正常。之前的 `lstm_results_new` 只保留原结果，不因字段相同就贴上Attention模型标签，仍需对应权重／配置绑定证明。
+
+### 14.3 调用与输出
+
+```powershell
+# 只做预检查；不拟合、不创建结果，缺包／PyTorch时退出码为2
+& ./.venv/matrix_profile/Scripts/python.exe shared/scripts/run_attention_lstm_autoencoder.py validate
+```
+
+拿到真实训练包并激活兼容的独立PyTorch环境后：
+
+```bash
+python shared/scripts/run_attention_lstm_autoencoder.py validate
+python shared/scripts/run_attention_lstm_autoencoder.py infer --max-channels 1 --output-dir runs/attention_lstm_autoencoder/results/september_smoke
+python shared/scripts/run_attention_lstm_autoencoder.py infer
+```
+
+默认结果在 `runs/attention_lstm_autoencoder/results/september_2026_frozen/`，提供逐通道分数、`ALL_SCORES_15MIN.csv`、`ALL_EVENTS.csv`、`run_summary.csv`、`channel_status.csv`、模型／输入／输出哈希和配置快照。共用原有分数／事件字段与时间键，但 `model=attention_lstm_autoencoder`，事件ID包含数据集、版本、电表和时间边界。不可用异常标记留空；类别未配置时连覆盖率也保留未知，不伪装缺测。校准版本保留训练包原哈希，训练截止、标定来源及近似状态另列。
+
+训练需要Spartan/Linux/WSL；新增预检查不依赖PyTorch，新推理入口在有兼容PyTorch时可跨平台。原分片训练或类别训练只能明确调用，不会因为缺权重自动启动。配置、缓存、权重及输出均与旧模型分开，非空推理结果目录拒绝覆盖，运行／测试不依赖 `legacy/`。当前仍设置 `ensemble_eligible=False`，避免未经评估把新旧两个LSTM变体当作两个独立投票者。
+
+专项测试使用合成输入／训练包和明确标注的NumPy评分桩检验适配流程；真实PyTorch前向／反向测试在当前缺依赖时明确跳过，不声称已经验证真实训练或模型效果。本次未安装依赖、未运行训练、未运行全量推理，也未提交或推送新的修改。

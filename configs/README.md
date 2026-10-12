@@ -10,6 +10,8 @@ Files:
 - `rpca.yaml`: documented RPCA time and daily-window settings; the current runner still receives them through CLI/Slurm.
 - `matrix_profile.yaml`: documented Matrix Profile time and multi-scale settings; the current runner still receives them through CLI/Slurm.
 - `lof.json`: executable settings for the separate batch LOF adapter; original features and parameters are retained, with `ensemble_eligible=false`.
+- `attention_lstm_autoencoder.yaml`: complete candidate settings for a new, independent Attention AE training run; these are not inferred teammate production settings.
+- `attention_lstm_autoencoder_inference.json`: frozen category packages and shared September input for the independent Attention inference entry point.
 
 Slurm files remain under each model's `methods/<model>/jobs` directory.
 
@@ -37,3 +39,11 @@ therefore its aligned output is a non-frozen comparison sidecar, not a fifth
 ECDF-calibrated ensemble input. JSON is used consistently with dataset I/O
 profiles. Configuration changes to the algorithm's features, neighbours,
 contamination or mode are rejected by this preservation-only adapter.
+
+Attention training configuration paths resolve from the repository root through
+its integration entry point. Its native pipeline retains a separate held-out
+calibration split. The new `infer` command reuses verified frozen packages for
+a different target period without moving the training cutoff or fitting on
+context/target rows. It does not change the dataset profile's four-model mapping
+or load files from `legacy/`. Category packages remain generated artifacts under
+`runs/attention_lstm_autoencoder/models/` and are not committed with code.
