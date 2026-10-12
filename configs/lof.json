@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "model": "lof",
+  "mode": "batch_outlier_detection",
+  "dataset_profile": "configs/datasets/september_2026.json",
+  "input_directory": null,
+  "output_directory": "runs/lof/september_2026_batch",
+  "features": ["powerFactor", "pRealKw", "pReactiveKw", "vRMSMin", "vRMSMax", "iRMSMin", "iRMSMax"],
+  "n_neighbors": 20,
+  "contamination": 0.005,
+  "plots": false,
+  "ensemble_eligible": false
+}

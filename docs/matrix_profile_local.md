@@ -128,3 +128,168 @@ timestamp,powerFactor,pRealKw,pRealPositiveKw,pRealNegativeKw,pReactiveKw,pReact
 `aligned/all_models_events.csv` 的阈值区间合并事件为 32,026 个，采用更宽的候选标记口径，不等于 `ALL_EVENTS.csv` 的 1,928 个原生正式事件。
 
 验证包括 9 项自动化测试、文件夹与 ZIP 输入分数一致、试跑断点续跑分数文件哈希一致，以及全量输出的时间范围、每通道 2,880 行、唯一主键、百分位范围、缺测空分数、30 分钟复制标记和其他模型不可用状态检查。
+
+## Isolated baseline sensitivity pilot
+
+The exploratory entry point is `shared/scripts/experiment_matrix_profile_baselines.py`.
+It reuses the existing multiscale scoring and event functions without editing the
+production detector. The 2/6/24-hour windows, 0.995 threshold, weekday/weekend
+reference selection, admission rules, and marked 30-to-15-minute repetition remain
+unchanged. All historical references end before September.
+
+```powershell
+& ./.venv/matrix_profile/Scripts/python.exe shared/scripts/experiment_matrix_profile_baselines.py --workers 4
+```
+
+Five variants compare raw July, cleaned July, raw July–August, cleaned July–August,
+and cleaned August. The pilot intentionally includes high-flag and middle-ranked
+channels from four equipment categories, historical freeze cases, and previous
+review cases. It is not a random fleet sample or a verified accuracy benchmark.
+
+The conservative quality rule requires power, both voltage columns, and both
+current columns to remain unchanged over contiguous five-minute readings for at
+least two hours. Near-zero power is excluded. These are **suspected** multi-sensor
+freezes, not confirmed communication faults and not a reproduction of the DOCX
+report's unpublished algorithm. Historical rows are masked, never replaced by
+zero, while target observations remain intact. The original valid-day and
+minimum-history requirements are retained. Reduced coverage is reported
+separately, not counted as an improvement.
+
+The report compares threshold flags on the same available channel/time keys
+across all five variants. Original raw-July scores and formal event IDs must be
+reproduced, and SHA256 hashes of the production score/event files must remain
+unchanged. Native and canonical scores, events, candidates, and coverage statuses
+are saved in a separate experiment directory; experimental variants must not be
+combined as independent models in the ensemble.
+
+Controlled probes add a 15-minute spike, a six-hour level shift, or a four-hour
+multi-sensor freeze to in-memory copies of real September days. Each variant gets
+the same probe, with unchanged values outside the known injection interval.
+These probes are not the existing `injected_meters` dataset. Background flags,
+newly flagged intervals, and out-of-interval spread are recorded separately;
+event overlap alone is not a recall estimate.
+
+Default outputs are under
+`runs/analysis/matrix_profile_baseline_pilot_20261005_v2/`, including `report.html`,
+`aggregate_comparison.csv`, `trial_summary.csv`, `baseline_quality_audit.csv`,
+`probes.csv`, and per-variant 30-minute/15-minute CSVs. Existing output directories
+are never overwritten. To repeat an experiment, provide a fresh `--output-dir`.
+
+### Completed pilot findings (2026-10-05)
+
+The pilot completed 11 channels across five reference variants. Comparisons use
+11,808 common native 30-minute intervals across nine channels, rather than
+counting lost scoring coverage as an improvement. On those intervals, the raw
+July flag rate was 60.81%, cleaned July 61.45%, raw July–August 33.43%, cleaned
+July–August 35.58%, and cleaned August 39.09%. These rates describe a purposively
+selected sample, not the full September fleet.
+
+Cleaned July–August reduced threshold flags by 41.49% and common-coverage formal
+events from 93 to 54. However, among ten identical eligible power-probe cases per
+type, formal event overlap fell from four to two for 15-minute spikes and from
+two to one for six-hour level shifts. Score-level overlap remained present in
+all ten cases. Background events can already overlap a probe, so these are
+sensitivity warnings, not measured fault recall or false-positive reductions.
+The production reference should not be replaced on the basis of alarm counts.
+
+Only nine of the 242 originally scored channels met the conservative July
+freeze rule, and cleaning July alone did not reduce threshold flags. Two pilot
+channels became unscorable under some alternative references due to the
+`constant_signal` admission rule; missing scores must not be treated as normal.
+The next checks should target amplitude/change-point event candidate paths,
+sparse on/off load admission, and validation against known injected intervals.
+
+Verification passed 19 tests, reproduced the original July-reference scores
+and formal event IDs, checked all 55 variant-channel outputs and their explicit
+30-to-15-minute repetition, and confirmed unchanged production score/event and
+detector-code SHA256 hashes. The pre-experiment backup was pushed to
+`origin/reshape1` as `3ae351b`; subsequent exploratory source changes remain local.
+
+## Opt-in amplitude event experiment and existing-injection validation
+
+The supplemental implementation is
+`methods/matrix_profile/src/anomalies/multiscale/magnitude_events.py`.
+It is deliberately **not enabled in the production detector**. It adds genuine
+five-minute amplitude evidence to the existing 2/6/24-hour approach, without
+altering scores, ECDF calibration, admission rules, or the original formal
+events. Historical envelopes allow +/-10-minute schedule jitter. A minimum
+absolute/relative power effect and current/jump/change-point evidence guard
+against admitting every saturated percentile. The stricter
+`transition_guarded` variant adds an onset/effect requirement. Suspected
+multi-sensor freezes, quality intervals, and missing points are excluded.
+
+```powershell
+& ./.venv/matrix_profile/Scripts/python.exe shared/scripts/experiment_matrix_profile_event_policy.py --workers 4 --output-dir runs/analysis/new_event_policy_trial
+& ./.venv/matrix_profile/Scripts/python.exe shared/scripts/validate_matrix_profile_injections.py --workers 4 --output-dir runs/analysis/new_injection_validation
+```
+
+Completed outputs are in `runs/analysis/matrix_profile_event_policy_20261005/`
+and `runs/analysis/matrix_profile_existing_injections_20261005/` respectively.
+Each contains `report.html` and machine-readable comparisons. The event policy
+runner also supports `--finalize-only` when all channel checkpoints exist:
+persisted original scores and legacy event IDs are revalidated before reporting.
+New runs require fresh output directories. Comparisons are alternatives of one
+model, not independent ensemble members.
+
+On the two-reference September pilot's common coverage (13,248 native intervals,
+ten channels), raw-July legacy produced 127 formal events and cleaned
+July–August with the transition guard produced 102. This is a 19.69% count
+reduction, not a demonstrated false-positive reduction. Within the cleaned
+reference, the new path adds 24 events over the 78-event legacy result. Controlled
+15-minute spike overlaps improve from 2/10 to 9/10, and six-hour shift overlaps
+from 1/10 to 9/10. Background overlaps and out-of-interval coverage are reported
+separately. These denominators differ from the earlier five-reference pilot.
+
+The existing injection validation uses all 33 locally available August files,
+checks embedded original power against independent originals, and freezes July
+references. Only known edited points are replayed; signed-power modifications
+outside those points never alter the historical reference or replay. Sources
+remain untouched. Scoring is limited to paired dates containing edits, not a
+full-month deployment run. Canonical 30/15-minute score fields retain their
+usual meaning. In the September event-policy output, `event_is_anomaly` and
+`supplemental_event_is_anomaly` separately describe event coverage; five-minute
+event overlap is recalculated for each 15-minute half, not copied from 30 minutes.
+
+Of 33 injection channels, 28 are admitted and five remain `constant_signal`.
+There are 6,292 known changed points overall and 5,232 on scored channels.
+Transition-guarded event coverage on scored changed points is 86.16%, versus
+77.87% for legacy. Coverage over **all** changed points, including unavailable
+channels, is 71.65%, versus 64.75%. Continuous edited-run overlaps improve from
+29/94 to 48/94. A continuous changed run is not necessarily one designed anomaly.
+Unmodified observations are not verified normal labels, so precision, F1, and
+real-world false-positive rates are not claimed. Of 46 missed scored runs, 24
+have fewer than three changed five-minute points, below the retained 15-minute
+formal-event duration. Larger missed runs remain for investigation.
+
+The new path is a tested optional experiment, not a default production change.
+Sparse-load admission, sub-15-minute point alerts, full-month background burden,
+and independently labelled normal/fault cases still need further validation.
+
+Verification passed 32 automated tests, independently recalculated all admitted
+injection-channel event/point totals, checked all 66 September canonical grids
+and their point-based event flags, and confirmed unchanged hashes for all 66
+original/injected input files and the original production scores/events/code.
+
+## 保守告警分流：减少优先核验负担，不删除检测结果
+
+新的 `shared/scripts/triage_matrix_profile_alerts.py` 读取现有九月正式事件，复用冻结七月历史参考，但不运行新的 Matrix Profile 评分或补漏路径。规则由 `configs/matrix_profile_alert_triage.json` 控制，所有参数在运行前固定，不根据九月全局分布或注入标签调节。
+
+```powershell
+& ./.venv/matrix_profile/Scripts/python.exe shared/scripts/triage_matrix_profile_alerts.py --workers 4 --output-dir runs/analysis/new_alert_triage
+```
+
+默认输入是原始九月运行目录、同名准备后输入目录，以及已有的 `matrix_profile_existing_injections_20261005` 配对验证。可用 `--run-dir`、`--input-dir`、`--validation-dir`、`--config` 修改相对路径。只支持固定历史参考模式；新运行必须使用空输出目录。其他月份使用相应运行元数据确定检测期，注入检查仍使用已保存的八月配对验证，不能解释为其他月份的真值评估。
+
+完成的结果在 `runs/analysis/matrix_profile_alert_triage_20261005_v2/`，早期草稿目录不应作为最终结论。完整输出、规则与限制见 README 第11节。HTML可以单独重新渲染，不重新分流：
+
+```powershell
+& ./.venv/matrix_profile/Scripts/python.exe shared/scripts/triage_matrix_profile_alerts.py --finalize-only --output-dir runs/analysis/matrix_profile_alert_triage_20261005_v2
+```
+
+重新渲染保留原执行时的实现哈希，并另记报告渲染代码哈希；若分类／历史校准实现或配置已变化，会要求新运行。不能用重新渲染把旧结果冒充新规则的运行结果。
+
+本次将1,928条原事件完整保留，分为58条优先事件（49个核验单元）、1,581条运行变化待核验（1,484个单元）及289条数据质量事件（172个单元）。总核验单元仍有1,705个；优先缩小不意味着全部异常变成49个。优先时间只取真实五分钟曲线满足幅度、持续、突变及佐证的连续核心，`priority_intervals.csv` 提供半开区间；如投影到十五分钟，应按实际区间重叠计算，不能从原三十分钟分数复制。它是核验附表，不替换统一模型分数 CSV。
+
+局限已在配对验证中明确量化：已有注入文件没有事件进入优先队列，原路径31条质量事件覆盖4,036个有效修改点；另38个原有事件覆盖的修改点仅留待核验，对应4个连续修改区段。原路径的优先核心＋质量覆盖率为77.14%，与全部保留的77.87%分开报告。补漏路径仅留待核验的改变点更多（转变限制472个、较宽松475个）。全体改变点6,292个、其中1,060个不可评分，保持独立分母；未修改点没有已确认正常标签，不能计算真实精确率或误报率。
+
+49个优先单元中34个来自太阳能、14个来自并网通道、1个来自照明与动力。天气和正常运行状态仍需外部确认。因此当前推荐用途是**排序与核验减负**，不是自动故障裁决，也不是删除待核验结果。原始输入、生产分数／事件和其他三个模型未改写。新增回归测试检查队列分离、原ID与字段保留、缺失／质量区段、同方向持续性、真实五分钟核心及十五分钟重叠；当前完整 Matrix Profile 测试集共51项通过。另独立核对全部1,928条事件的字段／成员关系、93个真实时间核心、84份注入路径输出及生产分数／事件哈希，均通过。

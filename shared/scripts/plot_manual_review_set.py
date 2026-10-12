@@ -27,6 +27,9 @@ MODELS = (
     ("rpca", "RPCA", "#B279A2"),
 )
 CATEGORY_NAMES = {
+    "priority_alert": "Priority review: power transition evidence",
+    "operating_change_review": "Operating change: verification needed",
+    "data_quality": "Data quality: suspected flatline",
     "four_model_consensus": "Four models flagged",
     "three_model_consensus": "Three models flagged",
     "matrix_profile_only": "Only Matrix Profile flagged",
@@ -51,6 +54,12 @@ def truth(frame: pd.DataFrame, column: str) -> np.ndarray:
     return frame[column].astype(str).str.lower().eq("true").to_numpy(dtype=bool)
 
 
+def flag_label(case) -> str:
+    flagged=int(case["flagged_model_count"])
+    available=int(case.get("available_model_count",4))
+    return f"{flagged}/4 flagged at anchor" if available==4 else f"{flagged}/{available} available models flagged (4 configured)"
+
+
 def figure_for_case(case: pd.Series, timeline: pd.DataFrame,
                     raw: pd.DataFrame, destination: Path) -> None:
     case_id = str(case["case_id"])
@@ -70,7 +79,7 @@ def figure_for_case(case: pd.Series, timeline: pd.DataFrame,
     )
     fig.patch.set_facecolor("white")
     flagged_count = int(case["flagged_model_count"])
-    fig.suptitle(f"{case_id}  |  {case['series_id']}  |  {category}  |  {flagged_count}/4 flagged at anchor",
+    fig.suptitle(f"{case_id}  |  {case['series_id']}  |  {category}  |  {flag_label(case)}",
                  y=0.985,
                  fontsize=15, fontweight="medium")
     subtitle = f"Anchor: {anchor}   |   24 h before / 24 h after"
@@ -154,12 +163,12 @@ def make_index(cases: pd.DataFrame, output: Path) -> None:
         flagged_count = int(case["flagged_model_count"])
         cards.append(
             f'<article><a href="{case_id}.png"><img src="{case_id}.png" alt="{case_id} time-series chart" loading="lazy"></a>'
-            f'<p><strong>{case_id}</strong> · {html.escape(category)} · {flagged_count}/4 flagged at anchor · {series}'
+            f'<p><strong>{case_id}</strong> · {html.escape(category)} · {flag_label(case)} · {series}'
             f'<br><small>{anchor} · Pending manual review</small></p></article>'
         )
     document = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>August manual-review case charts</title>
+<title>Manual-review case charts</title>
 <style>
 body{font-family:Arial,"Microsoft YaHei",sans-serif;margin:0 auto;max-width:1440px;padding:20px;color:#20252a;background:#fff}
 h1{font-size:22px;margin:0 0 8px}p.note{color:#555;margin:0 0 20px;line-height:1.5}
@@ -168,7 +177,7 @@ article{min-width:0;border-bottom:1px solid #ddd;padding-bottom:12px}article img
 article p{margin:8px 0 0;line-height:1.5;font-size:14px}small{color:#666}
 @media(max-width:800px){section{grid-template-columns:1fr}}
 </style></head><body>
-<h1>August manual-review case charts</h1>
+<h1>Manual-review case charts</h1>
 <p class="note">Each chart shows 24 hours before and after the selected interval. The top panels show raw power and current; the third panel shows each model's maximum percentile; the bottom panel shows model flags by interval. The red dashed line marks the selected interval. Every case is pending manual review: a model flag is not a verified fault. Click a chart to open the full-size image. Matrix Profile repeats each native 30-minute score on two 15-minute intervals.</p>
 <section>""" + "\n".join(cards) + "</section></body></html>"
     (output / "index.html").write_text(document, encoding="utf-8")

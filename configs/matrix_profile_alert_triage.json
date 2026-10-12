@@ -1,0 +1,14 @@
+{
+  "minimum_effect_kw": 0.5,
+  "relative_effect": 0.10,
+  "peak_effect_multiplier": 2.0,
+  "minimum_duration_minutes": 15,
+  "minimum_reference_days": 6,
+  "minimum_observed_ratio": 0.95,
+  "current_confirmation_fraction": 0.5,
+  "joint_percentile": 99.0,
+  "merge_gap_minutes": 0,
+  "slot_radius_points": 2,
+  "envelope_quantile": 0.01,
+  "jump_quantile": 0.995
+}

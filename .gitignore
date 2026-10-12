@@ -24,8 +24,8 @@ runs/
 *.pth
 *.joblib
 
-# Unmodified cloud snapshots retained for comparison
-legacy/cloud_snapshots/
+# Local backups only; never required by runtime or tests
+/legacy/
 
 # Presentation build cache
 docs/presentation/.build/

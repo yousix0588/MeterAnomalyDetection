@@ -25,25 +25,26 @@ def parse_bool(series: pd.Series) -> pd.Series:
     return series.astype(str).str.strip().str.lower().isin({"true", "1", "yes"})
 
 
+def discover_score_files(value: str | Path) -> list[Path]:
+    """Shared discovery for files, per-meter outputs and array-job score parts."""
+    path = Path(value)
+    if path.is_dir():
+        preferred = [path / "scores_15min.csv", path / "ALL_METERS_scores_15min.csv", path / "ALL_SCORES_15MIN.csv"]
+        candidates = [candidate for candidate in preferred if candidate.exists()]
+        if not candidates:
+            aggregate_parts = sorted(path.glob("ALL_METERS_scores_15min_part*.csv"))
+            candidates = aggregate_parts or sorted(path.glob("*_scores_15min.csv"))
+    else:
+        candidates = [path]
+    if not candidates:
+        raise FileNotFoundError(f"No canonical score CSV found under {path}")
+    return candidates
+
+
 def read_inputs(paths: list[str]) -> pd.DataFrame:
     frames = []
     for value in paths:
-        path = Path(value)
-        if path.is_dir():
-            preferred = [
-                path / "scores_15min.csv",
-                path / "ALL_METERS_scores_15min.csv",
-                path / "ALL_SCORES_15MIN.csv",
-            ]
-            candidates = [candidate for candidate in preferred if candidate.exists()]
-            if not candidates:
-                aggregate_parts = sorted(path.glob("ALL_METERS_scores_15min_part*.csv"))
-                candidates = aggregate_parts or sorted(path.glob("*_scores_15min.csv"))
-        else:
-            candidates = [path]
-        if not candidates:
-            raise FileNotFoundError(f"No canonical score CSV found under {path}")
-        for candidate in candidates:
+        for candidate in discover_score_files(value):
             frame = pd.read_csv(candidate)
             missing = REQUIRED_COLUMNS.difference(frame.columns)
             if missing:

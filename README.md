@@ -1,6 +1,6 @@
 # Group 14 电力数据异常检测
 
-本项目包含四种独立的电力数据异常检测方法：LSTM Autoencoder、LSTM-VAE、RPCA 和 Multi-scale Matrix Profile。仓库已经按照配置、数据、模型代码、集群任务、运行结果和公共工具重新组织。四个模型保留各自的原生输出，同时生成统一的15分钟输出，供后续集成学习使用。
+本项目原有四种独立的电力数据异常检测方法：LSTM Autoencoder、LSTM-VAE、RPCA 和 Multi-scale Matrix Profile。仓库已经按照配置、数据、模型代码、集群任务、运行结果和公共工具重新组织。四个模型保留各自的原生输出，同时生成统一的15分钟输出，供后续集成学习使用。新增LOF已按相同输入与时间键接入，但保留批量拟合方式，作为独立比较输出，暂不加入冻结ECDF的四模型融合。
 
 ## 1. 目录结构
 
@@ -12,11 +12,13 @@ group14reshape/
 |   |-- processed/meter_csvs/        # 每个电表通道一个合并CSV
 |   `-- manifests/                   # 数据与集群任务清单
 |-- docs/                            # 项目文档
-|-- legacy/                          # 不参与当前流程的旧文件
+|-- legacy/                          # 本地备份，不参与运行/测试，不提交Git
+|   `-- lof_import/                  # 上传的LOF仓库原件，仅作备份
 |-- methods/
 |   |-- lstm_autoencoder/
 |   |-- lstm_vae/
 |   |-- rpca/
+|   |-- lof/                        # LOF批量检测与独立对齐输出
 |   `-- matrix_profile/
 |-- runs/                            # 模型、日志、图片和检测结果
 `-- shared/
@@ -334,3 +336,183 @@ Python代码和YAML中的数据、输出路径已使用项目内相对路径，�
 默认读取 `AugSep_meters/` 中的 **2026-09-01（含）至 2026-10-01（不含）**，从原有 `data/processed/meter_csvs/` 提取 **2026-07-01 至 2026-07-31** 作为冻结基线。保留 5 分钟输入的 12 列格式，不修改原始数据或原有 8 月结果。准备后的输入写入 `data/processed/matrix_profile/september_fixed_july_local/`，结果写入 `runs/matrix_profile/results/september_fixed_july_local/`。
 
 中断后用相同参数追加 `--resume`；参数、源文件大小/修改时间、代码或元数据变化时必须使用新的输出与输入目录。统一结果位于该结果目录的 `aligned/`，仍为长表、特征宽表、事件表和运行摘要四个 CSV。本次只运行 Matrix Profile，另外三个模型的 `available` 为 `False`，不能视为四模型集成完成。
+
+## 11. 九月 Matrix Profile 告警减负与人工核验分流
+
+新入口 `shared/scripts/triage_matrix_profile_alerts.py` 对已保存的正式事件做保守分流，不重新训练、不重新计算模型分数，也不删除原事件。配置在 `configs/matrix_profile_alert_triage.json`；目前是试验性的核验工作流，不替换生产检测器或四模型统一输出。
+
+```powershell
+& ./.venv/matrix_profile/Scripts/python.exe shared/scripts/triage_matrix_profile_alerts.py --workers 4 --output-dir runs/analysis/new_alert_triage
+```
+
+脚本读取原始九月结果和准备好的五分钟数据，冻结原始七月参考，再检查已完成的八月原始／注入配对验证。需要先有 `runs/analysis/matrix_profile_existing_injections_20261005/`；若没有，按 [本地运行说明](docs/matrix_profile_local.md) 先运行注入验证。新运行须使用空输出目录，不能覆盖已有结果。
+
+完成的分流结果位于 `runs/analysis/matrix_profile_alert_triage_20261005_v2/`，入口为该目录的 `report.html`：
+
+| 队列 | 原始事件数 | 合并后的核验单元 | 含义 |
+| --- | ---: | ---: | --- |
+| 优先告警 | 58 | 49 | 有实际功率偏差、持续区段、突变与佐证；仍不是已确认故障 |
+| 运行变化待核验 | 1,581 | 1,484 | 未满足全部优先规则，不等于正常，不应直接删除 |
+| 数据质量问题 | 289 | 172 | 平线等质量问题，与电力故障分开核验 |
+
+原始 1,928 条事件全部保留，去重后共 1,705 个核验单元。**不是把模型检测结果从 1,928 条变成 49 条，而是优先队列缩小到 49 个单元。** 原来的 255,704 个超过候选阈值的十五分钟区间及其分数没有改变；不能把这些区间直接计为故障。
+
+优先规则使用原始五分钟曲线，参考同类日期的历史同时段范围（允许 ±10 分钟排程差异）。超出历史范围的功率偏差门槛为 `max(0.5 kW, 10% × 历史绝对功率P95)`，需同方向连续至少15分钟、峰值达到门槛两倍，且该连续区段开始时发生超过历史跳变门槛的突变，并有短／中尺度共同高分或电流超历史范围佐证。只用真实满足条件的核心区段作为优先时间，不把原长事件或整窗全部涂成告警。电流佐证与模型高分都不是故障真值。
+
+主要文件：
+
+- `priority_alert_units.csv`：建议首先人工查看的49个核验单元。
+- `priority_intervals.csv`：真实五分钟证据核心及其起止时间、方向、幅度和佐证；不是新的模型分数表。
+- `operating_change_review_units.csv`、`data_quality_units.csv`：另外两个核验队列。
+- `events_all_classified.csv`：完整事件台账，原ID、时间、分数、置信标签和证据均保留，追加队列、降级原因和核心区段。
+- `event_memberships.csv`：原事件到核验单元的一对一归属关系；一个单元可以包含多个原事件。
+- `injection_triage_comparison.csv`、`injection_downgraded_runs.csv`：减少优先告警后的已知修改覆盖与降级清单。
+- `triage_summary.json`：固定规则、计数、输入／实现哈希和限制。
+
+需要特别注意两项验证结果：
+
+- 49个优先单元中34个来自太阳能通道；天气、云遮、季节和设备状态可能解释这些变化，目前没有天气真值，不能直接判故障。
+- 这套严格规则在已有注入数据中生成 **0个优先事件**。许多修改表现为平线，仍由数据质量队列覆盖。在原路径上，全部原事件保留的改变点覆盖率为 `4,074 / 5,232 = 77.87%`；只看优先核心＋质量队列为 `4,036 / 5,232 = 77.14%`，另有38个改变点、4个连续改变区段只在待核验队列中保留。补漏路径受影响更大，详情见报告。
+
+因此不能仅运行优先队列就丢掉其他记录，也不能宣称真实误报率降低。5个不可评分通道、1,060个改变点仍单独记录为不可评分，不能当正常。当前结果适合安排小规模人工核验，尚不适合以这套规则完全取代异常检测。
+
+## 12. 与既有数据工具和统一输入输出衔接（2026-10-12）
+
+新的流程入口是 `shared/scripts/align_dataset_workflow.py`，配置为 `configs/datasets/september_2026.json`。这是数据和结果的适配入口，**不重新训练、推理或校准模型**。八月的 `common.yaml`、各模型配置和旧结果保留；九月用独立的数据集配置，不把月份改成全项目的隐式默认值。
+
+现有工具的分工如下：
+
+| 工具 | 本次如何复用 |
+| --- | --- |
+| `shared/data_tools/build_meter_csvs.py` | 复用 `ArchiveReader` 读取目录／ZIP／TAR；历史数据首次合并仍用原来的多输入工具 |
+| `shared/data_tools/meter_input.py` | 从原九月入口提取严格的12列、5分钟校验和基线／测试预处理；旧入口也调用同一实现 |
+| `shared/scripts/build_ensemble_features.py` | 复用模型分数校验、宽表、候选区段、运行摘要与分数文件发现逻辑 |
+| `shared/scripts/build_manual_review_set.py` | 复用模型时间线、原始曲线、人工标签表的提取与输出函数；新入口负责按三个核验队列抽样 |
+| `shared/scripts/plot_manual_review_set.py` | 继续读取原有人工核验CSV格式；新增队列名称并明确只有一个模型可用时的显示口径 |
+
+### 12.1 数据集角色与共享输入
+
+```text
+AugSep_meters/                          原始交付数据，只读，不移动旧目录
+data/processed/meter_csvs/             原有完整历史数据，继续保留原训练语料
+data/processed/matrix_profile/
+  september_fixed_july_local/          已完成九月MP运行的原输入缓存，只读
+data/processed/datasets/september_2026/
+  meter_csvs/                         新的共享输入，每通道一个12列5分钟CSV
+    _manifest.csv                     每通道基线、上下文、测试行数及缺失情况
+    dataset_metadata.json             角色、路径、哈希、来源和数据集签名
+data/injected_meters/                  人工修改数据，只用于独立配对评估
+```
+
+共享输入保留原七月／九月缓存的数值，另从原始交付数据读入8月31日上下文。没有插值、删除重复点、补零或重算正向／反向功率；重复时间戳、错误字段、错误时间网格会报错。缺失上下文和缺测日期会写入清单，不伪造完整观测。
+
+| 角色 | 时间范围（悉尼时区，左闭右开） | 用途 |
+| --- | --- | --- |
+| MP冻结参考 | `[2026-07-01, 2026-08-01)` | 与已完成九月MP运行一致，不用测试分布再校准 |
+| 神经网络上下文 | `[2026-08-31, 2026-09-01)` | 为24小时窗口提供紧邻测试前的观测，不进入训练／ECDF，也不输出为九月分数 |
+| 九月测试 | `[2026-09-01, 2026-10-01)` | 模型结果和集成输出的目标时间范围 |
+| 人工注入评估 | 既有八月原始／修改配对文件 | 独立评估来源，不混入生产数据或基线 |
+
+这个派生数据集只有七月参考、测试前上下文和九月数据，**不能代替其他模型原来的完整训练语料**。继续使用已训练权重时，缩放器、阈值和ECDF也应读取原冻结版本；如需重新训练，应明确选择原历史数据和训练截止日期。
+
+神经网络仍为24小时（288个5分钟点），每15分钟滑动（3点）；RPCA仍为每日288点；MP仍为2／6／24小时多尺度、30分钟原生步长。共享输入准备好不代表另外三个模型已经完成九月推理。尤其当前LSTM AE代码要求 `train_end == test_start`，且上下文来自基线尾部；七月训练截止与九月测试分离时，还需适配日期间隔与真正紧邻测试期的上下文。此入口不会偷偷修改其训练截止日期或自动重训。
+
+当前RPCA生产入口的校准版本也根据 `test_start` 生成；直接改成九月测试，可能把训练截止推到九月。新适配入口要求其他三模型提供 `train_pre_2026-08-01_*` 的冻结版本声明，MP要求原七月固定版本；不符合配置的结果会拒绝混入。后续推理适配应把冻结训练截止和测试日期明确分离，而不是修改训练截止来绕过运行限制。
+
+### 12.2 输出分层与统一键
+
+已生成的对齐结果位于 `runs/ensemble/september_2026_aligned/`：
+
+```text
+all_models_scores_15min.csv            保留原分数、ECDF、is_anomaly和分辨率声明
+ensemble_features_15min.csv            原四模型宽表，追加MP核验标记
+all_models_events.csv                  原规则生成的连续候选阈值区段，不是确认故障
+run_summary.csv                        原覆盖、候选阈值统计
+model_readiness.csv                    明确哪些模型在这个数据集实际有结果
+workflow_metadata.json                 来源、时间、窗口、输入哈希与输出口径
+dataset_profile.json                   本次执行的配置快照
+review/
+  model_events.csv                    原1,928条正式事件＋统一键／分数字段＋核验分类
+  review_units.csv                    三类核验单元，保留全部成员ID
+  event_memberships.csv               原事件与核验单元的归属对应
+  interval_flags_15min.csv             核验区间对齐到15分钟的独立附表
+manual_review/
+  review_cases.csv                    每类5个案例，共15个；人工标签留空
+  review_timeline_15min.csv            与既有核验工具兼容的四模型时间线
+  review_raw_5min.csv                  每个案例前后24小时的原始曲线
+  review_manifest.json                抽样方式、来源与限制
+```
+
+分数和核验区间按 `model + series_id + interval_start` 对齐；正式事件按 `model + event_id` 回溯，同时提供 `series_id + start + end`。一个核验单元可以包含多个通道，保留 `series_ids` 和成员ID，不伪装成单一电表事件。
+
+核验附表提供独立的 `priority_alert_overlap`、`operating_change_review_overlap`、`data_quality_overlap`。十五分钟区间可能同时覆盖不同类别的五分钟片段，因此三个字段不强制互斥。优先标记只覆盖真实五分钟核心，`priority_core_minutes` 为该十五分钟内实际覆盖的分钟数，不复制三十分钟分数或扩展到原长事件。
+
+模型分数不可用时，核验标记留空、`triage_available=False`、`review_state=unavailable_model_score`；有分数但没有正式事件时为 `no_source_event`，**不等于正常标签**。`source_event_noncore_context` 表示原长事件存在，但该区间不是优先核心。原始 `is_anomaly` 不被核验规则覆盖，原模型置信标签也不改成故障概率。
+
+附表布尔字段在CSV中为 `True / False / 空值`。用Pandas读取时，应指定可空布尔类型（`dtype="boolean"`），或复用新入口中的 `read_review_flags()`；不要直接对字符串使用 `bool()` 或 `astype(bool)`，否则字符串 `"False"` 也可能被当成真。`priority_core_minutes` 的空值同样表示不可用，不补成零。
+
+本次只有MP的九月结果：1,267,200个标准区间、684,672个可评分区间、255,704个候选高分区间，与旧运行一致。其他三种方法没有九月结果，宽表的 `available=False`、分数缺失。三类核验仍为49／1,484／172个单元，没有把这次对齐解释成误报率改善。新增案例也不声称四模型一致，人工状态为 `unreviewed`。
+
+### 12.3 后续如何调用
+
+在 `group14reshape` 根目录执行：
+
+```powershell
+# 准备或校验共享输入，不运行模型
+& ./.venv/matrix_profile/Scripts/python.exe shared/scripts/align_dataset_workflow.py --stage prepare
+
+# 复用已保存的模型／核验结果，导出到新目录并抽取核验样本
+& ./.venv/matrix_profile/Scripts/python.exe shared/scripts/align_dataset_workflow.py --stage all --output-dir runs/ensemble/september_2026_aligned_v2
+
+# 已导出结果但尚未抽样时，只调用既有核验函数生成样本
+& ./.venv/matrix_profile/Scripts/python.exe shared/scripts/align_dataset_workflow.py --stage review --output-dir runs/ensemble/september_2026_aligned_v2
+
+# 可选：用原画图工具读取新核验格式，不重新评分
+& ./.venv/matrix_profile/Scripts/python.exe shared/scripts/plot_manual_review_set.py --review-dir runs/ensemble/september_2026_aligned/manual_review
+```
+
+`--stage all` 已包含抽样；完成后不应再对同一目录运行 `--stage review`。非空结果目录／人工核验目录不会被覆盖，避免覆盖后续填写的标签。已有共享数据的哈希不匹配时会拒绝复用，不会强制覆盖。路径均由新入口相对于仓库根解析，可用于本地或Spartan；历史模型元数据中旧绝对路径保留作原运行记录，不拿它们定位新数据。
+
+其他三个模型完成九月推理后，把各自的标准分数CSV、分片列表或目录填入数据集配置的 `models.<name>.score_input`，再导出到新目录。会复用原聚合工具的文件发现逻辑，但要求输入按 `series_id` 排序；重复键、错误校准声明或完全不含目标月份的旧文件会报错。**不能把八月分数直接当作九月结果，也不能把三类核验CSV当成第五个机器学习模型。**
+
+此次只修改 `group14reshape`；原始交付、原历史数据、旧八月／九月生产结果及既有注入评估没有覆盖，尚未提交或推送GitHub。
+
+## 13. LOF接入：统一输入输出，保留原批量算法
+
+上传的LOF仓库原件已从顶层 `LOF/` 归档到 `legacy/lof_import/MeterAnomalyDetection-main/`，原文件内容保持不变，顶层不再保留重复目录。它也包含旧VAE、RPCA、Matrix Profile和融合工具，这些重复代码不覆盖当前模型。新增实现放在 `methods/lof/src/lof_batch.py`，测试放在 `methods/lof/tests/`，配置集中于 `configs/lof.json`，统一运行入口为 `shared/scripts/run_lof_local.py`，结果单独进入 `runs/lof/<run_name>/`。目录用途、完整字段和命令见 `methods/lof/README.md`。
+
+`legacy/` 现在仅作本地备份，整个目录由 `.gitignore` 忽略。运行代码和自动测试都不读取、导入或依赖其中的文件；没有这个目录也能运行和测试。LOF通过独立的参考计算和固定特征／参数断言验证算法一致性，不再检查备份原件。新元数据记录当前实现位置和代码哈希；旧运行元数据保留当时的原路径及哈希，不回写历史结果。`methods/lof/` 是当前执行代码，不能当作旧原件删除。
+
+保持原算法：每通道7个特征，`StandardScaler` 标准化，`LocalOutlierFactor(n_neighbors=20, contamination=0.005)`，使用 `fit_predict` 原生标签和 `-negative_outlier_factor_` 原生得分。没有加入滑动窗口、`novelty=True` 或七月训练模型。原脚本缺失括号、月份路径写死及绘图依赖问题由新入口解决，不修改上传原件。
+
+输入复用第12节的12列5分钟共享CSV。默认九月配置只取 `[2026-09-01, 2026-10-01)` 拟合与检测，七月数据和8月31日上下文不进入LOF。缺少任一所用特征的行不评分但保留为不可用；有效目标行不足21个的通道不拟合。重复时间戳、错列、非5分钟网格和无限值通过原共享工具拒绝，不插值、补零或重算功率。
+
+### 13.1 输出与时间窗口
+
+- `channels/<series_id>/point_scores_5min.csv`：保留全量已观测目标行、原生得分和 `-1/1` 标签，以及不可用状态。
+- `ALL_ANOMALIES_5MIN.csv`：全部原生异常点，单点尖峰仍保留。
+- `ALL_SCORES_15MIN.csv`：完整15分钟网格，保存Max、Mean和总体Std；`raw_score= max_score`，每区间最多3个5分钟点。任一可用原生点被标记则区间被标记，不用新的聚合阈值重判原标签。
+- `ALL_EVENTS_5MIN.csv`：连续5分钟异常点合并的原生区段，不跨缺失点或正常点连接。
+- `ALL_EVENTS_NATIVE_MIN15MIN.csv`：原生连续异常至少15分钟的子集，短异常没有从其他输出中删除。
+- `ALL_EVENTS_15MIN.csv`：用于时间对比的连续异常占用区间。**单个5分钟异常占据一个15分钟区间，不等于连续异常15分钟。**
+- `run_summary.csv`、`run_metadata.json`：覆盖率、点／区间／事件数、原生阈值、输入与代码哈希、运行版本及批量拟合范围。
+
+键与现有项目相同：`model=lof + series_id + interval_start`，事件提供 `model + event_id + series_id + start + end`。`coverage_ratio=valid_point_count/3`；`classification_complete` 表示三个点均有分数。部分覆盖区间的 `False` 只表示已评分点未被标记，不能说明缺失点正常。整段不可用时分数和 `is_anomaly` 留空，CSV导入应指定可空布尔类型。
+
+### 13.2 为什么暂不加入原四模型融合
+
+这是整批目标数据参与标准化和邻域拟合的回顾性离群检测，不是冻结模型推理，也不能当作无测试信息参与的训练／测试评估。`contamination=0.005` 是批量阈值参数，不是已验证故障比例。
+
+因此百分位字段保持为空，明确记录 `calibration_version=lof_batch_not_frozen_v1`、`ensemble_eligible=False`。可以按统一时间键独立比较原生标签与四模型结果，但不加入冻结ECDF的模型清单、打分融合或投票。原四模型的验证器仍会拒绝这个未冻结输出。上传文件夹中的测试结果百分位排名工具不作为训练ECDF调用。未来若改为七月冻结训练／九月推理，需要另行确认算法模式变更。
+
+### 13.3 本地调用
+
+```powershell
+# 先检查一个通道的完整目标月份，不把月份拆成小批拟合
+& ./.venv/matrix_profile/Scripts/python.exe shared/scripts/run_lof_local.py --max-channels 1 --output-dir runs/lof/september_2026_smoke
+
+# 确认后再显式运行全部通道；本次接入不会自动执行全量九月数据
+& ./.venv/matrix_profile/Scripts/python.exe shared/scripts/run_lof_local.py --output-dir runs/lof/september_2026_batch
+```
+
+可用 `--series-id` 选择具体通道，`--dataset-profile` 切换独立数据集配置，`--plots` 额外生成五张英文统计图。相对路径统一从仓库根解析，非空结果目录拒绝覆盖，原始数据、旧结果和现有四模型功能保持不变。LOF依赖可复用当前本地Matrix Profile环境，不改装已有环境；其他机器可根据 `methods/lof/requirements.txt` 配置独立环境。

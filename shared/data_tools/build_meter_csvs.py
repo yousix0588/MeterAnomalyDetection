@@ -53,7 +53,6 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-from tqdm import tqdm
 
 DATE_RE = re.compile(r"^(\d{2})_(\d{2})_(\d{4})$")
 
@@ -141,6 +140,7 @@ def find_date_in_path(path: str):
 
 def build_meter_csvs(data_paths, out_dir: str, limit: int | None = None, force: bool = False,
                       date_end: str = None, require_start: str = None, require_end: str = None):
+    from tqdm import tqdm
     if isinstance(data_paths, str):
         data_paths = [data_paths]
 

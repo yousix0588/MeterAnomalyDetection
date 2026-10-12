@@ -48,3 +48,42 @@ event_fields:
   - threshold
   - interval_count
   - calibration_version
+
+# Review annotations are sidecars, not new model scores or verified labels.
+review_sidecars:
+  join_keys: [model, series_id, interval_start]
+  interval_minutes: 15
+  event_join_keys: [model, event_id]
+  event_time_fields: [start, end]
+  queues: [priority_alert, operating_change_review, data_quality]
+  nullable_interval_fields:
+    - source_formal_event_overlap
+    - priority_alert_overlap
+    - operating_change_review_overlap
+    - data_quality_overlap
+    - priority_core_minutes
+  csv_flag_encoding: "True / False / empty; import flags as nullable boolean"
+  evidence_resolution_minutes: 5
+  matrix_profile_score_resolution_minutes: 30
+  no_source_event_is_normal: false
+  unavailable_score_annotation: null
+  overwrite_model_is_anomaly: false
+
+# Separate comparison outputs: not inputs to the existing frozen ensemble.
+non_frozen_model_sidecars:
+  lof:
+    mode: batch_outlier_detection
+    native_resolution_minutes: 5
+    aligned_interval_minutes: 15
+    join_keys: [model, series_id, interval_start]
+    raw_score: max_score
+    score_std_ddof: 0
+    anomaly_rule: any_available_native_point_flagged
+    coverage_ratio: valid_point_count / 3
+    unavailable_anomaly_flag: null
+    max_percentile: null
+    mean_percentile: null
+    calibration_version: lof_batch_not_frozen_v1
+    ensemble_eligible: false
+    native_event_semantics: consecutive_5m_flags_without_gap_bridging
+    aligned_event_semantics: occupied_15m_bins_not_continuous_fault_duration

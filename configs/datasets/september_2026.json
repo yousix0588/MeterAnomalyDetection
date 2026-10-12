@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "dataset_id": "september_2026_fixed_july",
+  "time": {
+    "timezone": "Australia/Sydney",
+    "input_interval_minutes": 5,
+    "ensemble_interval_minutes": 15,
+    "baseline_start_inclusive": "2026-07-01",
+    "train_end_exclusive": "2026-08-01",
+    "context_start_inclusive": "2026-08-31",
+    "test_start_inclusive": "2026-09-01",
+    "test_end_exclusive": "2026-10-01"
+  },
+  "window_policy": {
+    "neural_window_minutes": 1440,
+    "neural_stride_minutes": 15,
+    "neural_window_points": 288,
+    "neural_stride_points": 3,
+    "matrix_profile_windows_minutes": [120, 360, 1440],
+    "matrix_profile_stride_minutes": 30,
+    "rpca_daily_points": 288
+  },
+  "data": {
+    "raw_target_source": "AugSep_meters",
+    "original_history_directory": "data/processed/meter_csvs",
+    "prepared_source_directory": "data/processed/matrix_profile/september_fixed_july_local",
+    "shared_input_directory": "data/processed/datasets/september_2026/meter_csvs",
+    "injected_directory": "data/injected_meters"
+  },
+  "models": {
+    "matrix_profile": {
+      "score_input": "runs/matrix_profile/results/september_fixed_july_local/ALL_SCORES_15MIN.csv",
+      "run_directory": "runs/matrix_profile/results/september_fixed_july_local"
+    },
+    "lstm_autoencoder": {"score_input": null},
+    "lstm_vae": {"score_input": null},
+    "rpca": {"score_input": null}
+  },
+  "review": {
+    "triage_directory": "runs/analysis/matrix_profile_alert_triage_20261005_v2",
+    "policy_config": "configs/matrix_profile_alert_triage.json",
+    "sample_per_queue": 5
+  },
+  "output": {"directory": "runs/ensemble/september_2026_aligned"}
+}
