@@ -3,7 +3,7 @@
 RPCA-based robust subspace anomaly detection for Spartan.
 
 Designed for:
-  /data/projects/punim1257/Group14/data/processed/meter_csvs/<meter_channel>.csv
+  /data/projects/punim1257/Group14/meter_csvs/<meter_channel>.csv
 
 Protocol:
 - One meter-channel per Slurm task.
@@ -179,14 +179,6 @@ def rms_point_score(residual_flat):
     return point, daily
 
 
-def frozen_ecdf(values, baseline):
-    reference = np.sort(np.asarray(baseline, dtype=float)[np.isfinite(baseline)])
-    if reference.size == 0:
-        raise ValueError("Training score distribution is empty")
-    values = np.asarray(values, dtype=float)
-    return np.searchsorted(reference, values, side="right") / reference.size
-
-
 def make_timeline_plot(
     out_png,
     test_dates,
@@ -258,8 +250,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", required=True)
     ap.add_argument("--outdir", required=True)
-    ap.add_argument("--test-start", default="2026-08-01")
-    ap.add_argument("--test-end", default="2026-09-01")
+    ap.add_argument("--test-start", default="2026-07-01")
+    ap.add_argument("--test-end", default="2026-08-01")
     ap.add_argument("--power-cutoff", type=float, default=0.5)
     ap.add_argument("--threshold-quantile", type=float, default=0.99)
     ap.add_argument("--subspace-energy", type=float, default=0.95)
@@ -382,59 +374,6 @@ def main():
         index=False,
     )
 
-    # Canonical 15-minute scores retain both instantaneous severity (max)
-    # and persistence (mean). Their ECDFs are frozen from training only.
-    train_blocks = train_point.reshape(-1, 3)
-    test_blocks = test_point.reshape(-1, 3)
-    train_block_max = train_blocks.max(axis=1)
-    train_block_mean = train_blocks.mean(axis=1)
-    test_block_max = test_blocks.max(axis=1)
-    test_block_mean = test_blocks.mean(axis=1)
-    test_block_std = test_blocks.std(axis=1)
-    block_threshold = float(np.quantile(train_block_max, args.threshold_quantile))
-    calibration_version = f"train_pre_{args.test_start}_v1"
-    interval_starts = [
-        day + pd.Timedelta(minutes=15 * index)
-        for day in test_dates
-        for index in range(96)
-    ]
-    interval_starts = pd.DatetimeIndex(interval_starts).tz_localize("Australia/Sydney")
-    scores_15min = pd.DataFrame({
-        "model": "rpca",
-        "series_id": meter_channel,
-        "interval_start": interval_starts,
-        "interval_end": interval_starts + pd.Timedelta(minutes=15),
-        "raw_score": test_block_max,
-        "max_score": test_block_max,
-        "mean_score": test_block_mean,
-        "score_std": test_block_std,
-        "max_percentile": frozen_ecdf(test_block_max, train_block_max),
-        "mean_percentile": frozen_ecdf(test_block_mean, train_block_mean),
-        "threshold": block_threshold,
-        "is_anomaly": test_block_max > block_threshold,
-        "valid_point_count": 3,
-        "expected_point_count": 3,
-        "coverage_ratio": 1.0,
-        "source_resolution_minutes": 5,
-        "aggregation_method": "max_and_mean_of_3_native_5m_scores",
-        "data_status": "native_5m",
-        "calibration_version": calibration_version,
-        "available": True,
-    })
-    scores_15min.to_csv(outdir / f"{meter_channel}_scores_15min.csv", index=False)
-    np.savez_compressed(
-        outdir / f"{meter_channel}_calibration_scores.npz",
-        max_scores=train_block_max,
-        mean_scores=train_block_mean,
-    )
-    pd.DataFrame([{
-        "model": "rpca", "series_id": meter_channel,
-        "fit_end_exclusive": args.test_start, "source": "train_only",
-        "score_definition": "15min_max_of_native_5m_residual_scores",
-        "sample_count": len(train_block_max),
-        "calibration_version": calibration_version,
-    }]).to_json(outdir / f"{meter_channel}_calibration.json", orient="records", indent=2)
-
     summary = pd.DataFrame([{
         "meter_channel": meter_channel,
         "status": "ok",
@@ -463,7 +402,7 @@ def main():
     )
 
     make_timeline_plot(
-        outdir / f"{meter_channel}_rpca_august.png",
+        outdir / f"{meter_channel}_rpca_july.png",
         test_dates,
         test_raw,
         test_point,
